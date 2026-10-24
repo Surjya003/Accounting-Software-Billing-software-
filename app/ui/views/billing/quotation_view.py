@@ -107,6 +107,12 @@ class QuotationItemWidget(QFrame):
         btn_remove.clicked.connect(lambda: self.remove_requested.emit(self))
         layout.addWidget(btn_remove)
 
+        self.lbl_hsn_warn = QLabel("⚠️ HSN missing")
+        self.lbl_hsn_warn.setProperty("variant", "warning")
+        self.lbl_hsn_warn.setToolTip("HSN/SAC missing (non-blocking warning; confirm with CA)")
+        self.lbl_hsn_warn.setVisible(False)
+        layout.addWidget(self.lbl_hsn_warn)
+
     def _on_product_selected(self, idx):
         data = self.cmb_product.itemData(idx)
         if data:
@@ -114,6 +120,10 @@ class QuotationItemWidget(QFrame):
             self.cmb_gst.setCurrentText(str(int(data.get("tax_rate", 18))))
             if data.get("unit"):
                 self.txt_unit.setText(data.get("unit"))
+            hsn = str(data.get("hsn_code") or "").strip()
+            self.lbl_hsn_warn.setVisible(not bool(hsn))
+        else:
+            self.lbl_hsn_warn.setVisible(False)
         self._recalculate()
 
     def _recalculate(self):
@@ -176,6 +186,8 @@ class QuotationItemWidget(QFrame):
         self.spn_disc.setValue(float(item.get("discount_pct", 0)))
         self.cmb_gst.setCurrentText(str(int(float(item.get("gst_rate_pct", 18)))))
         self._recalculate()
+        hsn = str(item.get("hsn_code") or "").strip()
+        self.lbl_hsn_warn.setVisible(not bool(hsn))
 
 
 class QuotationFormDialog(QDialog):

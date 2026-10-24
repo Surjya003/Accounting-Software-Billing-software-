@@ -27,6 +27,9 @@ from app.services.pdf.core.page import (
     PAGE_SIZE, PAGE_WIDTH, PAGE_HEIGHT, PAGE_MARGIN, FRAME_WIDTH, FRAME_HEIGHT, NumberedCanvas, SimpleDocTemplate
 )
 from app.services.pdf.core.flex_table import calculate_filler_height, build_stretched_table
+from app.services.pdf.core.adaptive_table import (
+    AdaptiveCell, build_adaptive_items_table
+)
 from app.services.pdf.core.formatting import (
     format_currency, format_date_ddmmyyyy, amount_to_words_inr
 )
@@ -184,7 +187,7 @@ def _build_quotation_story(data: Dict[str, Any]) -> List[Any]:
         ]
     ]
 
-    item_rows = []
+    item_specs: List[List[AdaptiveCell]] = []
     tot_qty = 0.0
     tot_amt = 0.0
 
@@ -204,16 +207,16 @@ def _build_quotation_story(data: Dict[str, Any]) -> List[Any]:
         rate_str = format_currency(rate, num_fmt)
         amt_str = format_currency(amt, num_fmt)
 
-        item_rows.append([
-            Paragraph(str(idx), make_p(font_size=FS_BODY, alignment=1)),
-            Paragraph(f"<b>{desc}</b>", make_p(font_size=FS_BODY)),
-            Paragraph(hsn, make_p(font_size=FS_BODY, alignment=1)),
-            Paragraph(f"{qty:,.2f}", make_p(font_size=FS_BODY, alignment=2)),
-            Paragraph(unit, make_p(font_size=FS_BODY, alignment=1)),
-            Paragraph(rate_str, make_p(font_size=FS_BODY, alignment=2)),
-            Paragraph(disc_str, make_p(font_size=FS_BODY, alignment=2)),
-            Paragraph(f"{tax_pct:.1f}%", make_p(font_size=FS_BODY, alignment=2)),
-            Paragraph(amt_str, make_p(font_size=FS_BODY, alignment=2)),
+        item_specs.append([
+            AdaptiveCell(str(idx), alignment=1),
+            AdaptiveCell(f"<b>{desc}</b>", alignment=0, bold=True),
+            AdaptiveCell(hsn, alignment=1),
+            AdaptiveCell(f"{qty:,.2f}", alignment=2),
+            AdaptiveCell(unit, alignment=1),
+            AdaptiveCell(rate_str, alignment=2),
+            AdaptiveCell(disc_str, alignment=2),
+            AdaptiveCell(f"{tax_pct:.1f}%", alignment=2),
+            AdaptiveCell(amt_str, alignment=2),
         ])
 
     total_row = [
@@ -235,15 +238,8 @@ def _build_quotation_story(data: Dict[str, Any]) -> List[Any]:
         ('LINEBELOW', (0, -1), (-1, -1), 0.6, COLOR_BORDER_SOFT),
         ('INNERGRID', (0, 0), (-1, -1), 0.4, COLOR_LINE),
         ('BOX', (0, 0), (-1, -1), 0.5, COLOR_BORDER_SOFT),
-        ('TOPPADDING', (0, 0), (-1, -1), 2.0),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 2.0),
-        ('LEFTPADDING', (0, 0), (-1, -1), 3),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 3),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
     ]
-
-    meas_table = Table(headers + item_rows + [total_row], colWidths=COLS_QUOTATION)
-    meas_table.setStyle(TableStyle(table_style))
 
     # 6. Summary & Price Basis
     footer_elements = []
@@ -359,22 +355,12 @@ def _build_quotation_story(data: Dict[str, Any]) -> List[Any]:
     footer_elements.append(Spacer(1, 2))
     footer_elements.append(bot_table)
 
-    # 9. Measure flex filler
-    filler_h = calculate_filler_height(
-        flowables_before_table=list(story),
-        items_table_initial=meas_table,
-        flowables_after_table=footer_elements,
-        available_width=FRAME_WIDTH_PT,
-        available_height=FRAME_HEIGHT,
-        min_filler=10.0
-    )
-
-    stretched_table = build_stretched_table(
-        header_data=headers,
-        item_rows=item_rows,
+    # 9. Build Adaptive Items Table Flowables
+    table_flowables = build_adaptive_items_table(
+        headers=headers,
+        item_specs=item_specs,
         col_widths=COLS_QUOTATION,
         base_style=table_style,
-        filler_height=filler_h,
         total_row_data=total_row,
         total_row_style=[
             ('LINEABOVE', (0, -1), (-1, -1), 0.6, COLOR_BORDER_SOFT),
@@ -382,10 +368,19 @@ def _build_quotation_story(data: Dict[str, Any]) -> List[Any]:
             ('BACKGROUND', (0, -1), (-1, -1), COLOR_NAVY_LIGHT),
             ('TOPPADDING', (0, -1), (-1, -1), 2),
             ('BOTTOMPADDING', (0, -1), (-1, -1), 2),
-        ]
+        ],
+        flowables_before=list(story),
+        flowables_after=footer_elements,
+        company_settings=comp,
+        available_width=FRAME_WIDTH_PT,
+        available_height=FRAME_HEIGHT,
+        fallback_font_size=FS_BODY,
+        fallback_padding=2.0,
+        desc_col_idx=1,
+        grid_color=COLOR_LINE
     )
 
-    story.append(stretched_table)
+    story.extend(table_flowables)
     story.extend(footer_elements)
     return story
 

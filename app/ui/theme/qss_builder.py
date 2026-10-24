@@ -81,6 +81,12 @@ QLabel[variant="danger"], QLabel[variant="error"] {{
     font-weight: {t.font_weight_medium};
 }}
 
+QLabel[variant="warning"] {{
+    color: {t.warning};
+    font-size: {t.font_size_caption}px;
+    font-weight: {t.font_weight_bold};
+}}
+
 /* Tabular number font for money labels */
 QLabel[variant="tabular"], .TabularFigure {{
     font-family: {t.font_family_mono};

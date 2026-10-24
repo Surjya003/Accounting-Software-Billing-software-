@@ -85,6 +85,12 @@ def init_db():
                     conn.exec_driver_sql("ALTER TABLE company_profile ADD COLUMN logo_path VARCHAR(500)")
                 if "allow_negative_stock" not in col_names:
                     conn.exec_driver_sql("ALTER TABLE company_profile ADD COLUMN allow_negative_stock BOOLEAN DEFAULT 0 NOT NULL")
+                if "adaptive_item_font_enabled" not in col_names:
+                    conn.exec_driver_sql("ALTER TABLE company_profile ADD COLUMN adaptive_item_font_enabled BOOLEAN DEFAULT 1 NOT NULL")
+                if "adaptive_item_font_max" not in col_names:
+                    conn.exec_driver_sql("ALTER TABLE company_profile ADD COLUMN adaptive_item_font_max NUMERIC(4, 2) DEFAULT 13.0 NOT NULL")
+                if "adaptive_item_font_min" not in col_names:
+                    conn.exec_driver_sql("ALTER TABLE company_profile ADD COLUMN adaptive_item_font_min NUMERIC(4, 2) DEFAULT 7.5 NOT NULL")
                 conn.commit()
         except Exception:
             pass

@@ -144,6 +144,15 @@ MIGRATIONS = [
                 locked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );"""
         ]
+    ),
+    (
+        6,
+        "Adaptive Item Font Sizing for Billing Documents",
+        [
+            "ALTER TABLE company_profile ADD COLUMN adaptive_item_font_enabled BOOLEAN DEFAULT 1 NOT NULL;",
+            "ALTER TABLE company_profile ADD COLUMN adaptive_item_font_max NUMERIC(4, 2) DEFAULT 13.0 NOT NULL;",
+            "ALTER TABLE company_profile ADD COLUMN adaptive_item_font_min NUMERIC(4, 2) DEFAULT 7.5 NOT NULL;",
+        ]
     )
 ]
 

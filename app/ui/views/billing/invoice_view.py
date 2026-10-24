@@ -102,6 +102,12 @@ class InvoiceItemWidget(QFrame):
         btn_remove.clicked.connect(lambda: self.remove_requested.emit(self))
         layout.addWidget(btn_remove)
 
+        self.lbl_hsn_warn = QLabel("⚠️ HSN missing")
+        self.lbl_hsn_warn.setProperty("variant", "warning")
+        self.lbl_hsn_warn.setToolTip("HSN/SAC missing (non-blocking warning; confirm with CA)")
+        self.lbl_hsn_warn.setVisible(False)
+        layout.addWidget(self.lbl_hsn_warn)
+
     def eventFilter(self, watched, event):
         if watched == self.cmb_gst and event.type() == QEvent.KeyPress:
             if event.key() in (Qt.Key_Return, Qt.Key_Enter):
@@ -114,6 +120,10 @@ class InvoiceItemWidget(QFrame):
         if data:
             self.spn_rate.setValue(data.get("price", 0))
             self.cmb_gst.setCurrentText(str(int(data.get("tax_rate", 18))))
+            hsn = str(data.get("hsn_code") or "").strip()
+            self.lbl_hsn_warn.setVisible(not bool(hsn))
+        else:
+            self.lbl_hsn_warn.setVisible(False)
         self._recalculate()
 
     def _recalculate(self):
@@ -164,6 +174,8 @@ class InvoiceItemWidget(QFrame):
         gst = str(int(float(gst_val if gst_val is not None else 18)))
         self.cmb_gst.setCurrentText(gst)
         self._recalculate()
+        hsn = str(item_data.get("hsn_code") or "").strip()
+        self.lbl_hsn_warn.setVisible(not bool(hsn))
 
 
 class InvoiceFormDialog(QDialog):

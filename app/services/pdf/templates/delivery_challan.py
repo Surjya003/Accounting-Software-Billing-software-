@@ -28,6 +28,9 @@ from app.services.pdf.core.page import (
     PAGE_SIZE, PAGE_WIDTH, PAGE_HEIGHT, PAGE_MARGIN, FRAME_WIDTH, FRAME_HEIGHT, NumberedCanvas, SimpleDocTemplate
 )
 from app.services.pdf.core.flex_table import calculate_filler_height, build_stretched_table
+from app.services.pdf.core.adaptive_table import (
+    AdaptiveCell, build_adaptive_items_table
+)
 from app.services.pdf.core.formatting import (
     format_currency, format_date_ddmmyyyy, amount_to_words_inr
 )
@@ -282,7 +285,7 @@ def _build_challan_story(data: Dict[str, Any], copy_label: str = "ORIGINAL FOR C
             ]
         ]
 
-    item_rows = []
+    item_specs: List[List[AdaptiveCell]] = []
     for idx, it in enumerate(data.get("items", []), start=1):
         desc = escape_xml(it.get("item_description") or it.get("product_name") or "Item")
         hsn = escape_xml(str(it.get("hsn_code") or "-"))
@@ -311,41 +314,41 @@ def _build_challan_story(data: Dict[str, Any], copy_label: str = "ORIGINAL FOR C
         rem = escape_xml(it.get("remarks") or "-")
 
         if show_value and is_supply:
-            item_rows.append([
-                Paragraph(str(idx), make_p(font_size=FS_BODY, alignment=1)),
-                Paragraph(f"<b>{desc}</b>", make_p(font_size=FS_BODY)),
-                Paragraph(hsn, make_p(font_size=FS_BODY, alignment=1)),
-                Paragraph(f"{qty_d:,.2f}", make_p(font_size=FS_BODY, alignment=2)),
-                Paragraph(unit, make_p(font_size=FS_BODY, alignment=1)),
-                Paragraph(format_currency(taxable_val, num_fmt), make_p(font_size=FS_BODY, alignment=2)),
-                Paragraph(f"{tax_rate:.1f}%" if tax_rate > 0 else "0%", make_p(font_size=FS_BODY, alignment=1)),
-                Paragraph(format_currency(tax_amt, num_fmt), make_p(font_size=FS_BODY, alignment=2)),
-                Paragraph(format_currency(total_item_val, num_fmt), make_p(font_size=FS_BODY, alignment=2)),
-                Paragraph(rem, make_p(font_size=FS_SMALL)),
+            item_specs.append([
+                AdaptiveCell(str(idx), alignment=1),
+                AdaptiveCell(f"<b>{desc}</b>", alignment=0, bold=True),
+                AdaptiveCell(hsn, alignment=1),
+                AdaptiveCell(f"{qty_d:,.2f}", alignment=2),
+                AdaptiveCell(unit, alignment=1),
+                AdaptiveCell(format_currency(taxable_val, num_fmt), alignment=2),
+                AdaptiveCell(f"{tax_rate:.1f}%" if tax_rate > 0 else "0%", alignment=1),
+                AdaptiveCell(format_currency(tax_amt, num_fmt), alignment=2),
+                AdaptiveCell(format_currency(total_item_val, num_fmt), alignment=2),
+                AdaptiveCell(rem, alignment=0, is_small=True),
             ])
         elif show_value and not is_supply:
-            item_rows.append([
-                Paragraph(str(idx), make_p(font_size=FS_BODY, alignment=1)),
-                Paragraph(f"<b>{desc}</b>", make_p(font_size=FS_BODY)),
-                Paragraph(hsn, make_p(font_size=FS_BODY, alignment=1)),
-                Paragraph(f"{qty_d:,.2f}", make_p(font_size=FS_BODY, alignment=2)),
-                Paragraph(unit, make_p(font_size=FS_BODY, alignment=1)),
-                Paragraph(format_currency(rate, num_fmt), make_p(font_size=FS_BODY, alignment=2)),
-                Paragraph(wt_str, make_p(font_size=FS_BODY, alignment=1)),
-                Paragraph(format_currency(taxable_val, num_fmt), make_p(font_size=FS_BODY, alignment=2)),
-                Paragraph(rem, make_p(font_size=FS_SMALL)),
+            item_specs.append([
+                AdaptiveCell(str(idx), alignment=1),
+                AdaptiveCell(f"<b>{desc}</b>", alignment=0, bold=True),
+                AdaptiveCell(hsn, alignment=1),
+                AdaptiveCell(f"{qty_d:,.2f}", alignment=2),
+                AdaptiveCell(unit, alignment=1),
+                AdaptiveCell(format_currency(rate, num_fmt), alignment=2),
+                AdaptiveCell(wt_str, alignment=1),
+                AdaptiveCell(format_currency(taxable_val, num_fmt), alignment=2),
+                AdaptiveCell(rem, alignment=0, is_small=True),
             ])
         else:
-            item_rows.append([
-                Paragraph(str(idx), make_p(font_size=FS_BODY, alignment=1)),
-                Paragraph(f"<b>{desc}</b>", make_p(font_size=FS_BODY)),
-                Paragraph(hsn, make_p(font_size=FS_BODY, alignment=1)),
-                Paragraph(f"{qty_o:,.2f}", make_p(font_size=FS_BODY, alignment=2)),
-                Paragraph(f"<b>{qty_d:,.2f}</b>", make_p(font_size=FS_BODY, bold=True, alignment=2)),
-                Paragraph(unit, make_p(font_size=FS_BODY, alignment=1)),
-                Paragraph(str(pkg), make_p(font_size=FS_BODY, alignment=1)),
-                Paragraph(f"{wt:.1f} kg" if wt > 0 else "-", make_p(font_size=FS_BODY, alignment=2)),
-                Paragraph(rem, make_p(font_size=FS_SMALL)),
+            item_specs.append([
+                AdaptiveCell(str(idx), alignment=1),
+                AdaptiveCell(f"<b>{desc}</b>", alignment=0, bold=True),
+                AdaptiveCell(hsn, alignment=1),
+                AdaptiveCell(f"{qty_o:,.2f}", alignment=2),
+                AdaptiveCell(f"<b>{qty_d:,.2f}</b>", alignment=2, bold=True),
+                AdaptiveCell(unit, alignment=1),
+                AdaptiveCell(str(pkg), alignment=1),
+                AdaptiveCell(f"{wt:.1f} kg" if wt > 0 else "-", alignment=2),
+                AdaptiveCell(rem, alignment=0, is_small=True),
             ])
 
     if show_value and is_supply:
@@ -393,16 +396,8 @@ def _build_challan_story(data: Dict[str, Any], copy_label: str = "ORIGINAL FOR C
         ('LINEBELOW', (0, -1), (-1, -1), 0.6, COLOR_BORDER),
         ('INNERGRID', (0, 0), (-1, -1), 0.4, COLOR_GRID),
         ('BOX', (0, 0), (-1, -1), 0.5, COLOR_BORDER),
-        ('TOPPADDING', (0, 0), (-1, -1), 2.5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5),
-        ('LEFTPADDING', (0, 0), (-1, -1), 2.5),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 2.5),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
     ]
-
-    meas_table = Table(headers + item_rows + [total_row], colWidths=col_widths)
-    meas_table.setStyle(TableStyle(table_style))
-    meas_table.setStyle(TableStyle(table_style))
 
     # 6. Footer Area (Condition Note, Valuation if enabled, Triple Sign-off)
     footer_elements = []
@@ -472,22 +467,12 @@ def _build_challan_story(data: Dict[str, Any], copy_label: str = "ORIGINAL FOR C
     ]))
     footer_elements.append(t_signs)
 
-    # 8. Measure flex filler
-    filler_h = calculate_filler_height(
-        flowables_before_table=list(story),
-        items_table_initial=meas_table,
-        flowables_after_table=footer_elements,
-        available_width=FRAME_WIDTH_PT,
-        available_height=FRAME_HEIGHT,
-        min_filler=10.0
-    )
-
-    stretched_table = build_stretched_table(
-        header_data=headers,
-        item_rows=item_rows,
+    # 8. Build Adaptive Items Table Flowables
+    table_flowables = build_adaptive_items_table(
+        headers=headers,
+        item_specs=item_specs,
         col_widths=col_widths,
         base_style=table_style,
-        filler_height=filler_h,
         total_row_data=total_row,
         total_row_style=[
             ('LINEABOVE', (0, -1), (-1, -1), 0.8, COLOR_BORDER),
@@ -495,10 +480,19 @@ def _build_challan_story(data: Dict[str, Any], copy_label: str = "ORIGINAL FOR C
             ('BACKGROUND', (0, -1), (-1, -1), COLOR_BG_LIGHT),
             ('TOPPADDING', (0, -1), (-1, -1), 2.5),
             ('BOTTOMPADDING', (0, -1), (-1, -1), 2.5),
-        ]
+        ],
+        flowables_before=list(story),
+        flowables_after=footer_elements,
+        company_settings=comp,
+        available_width=FRAME_WIDTH_PT,
+        available_height=FRAME_HEIGHT,
+        fallback_font_size=FS_BODY,
+        fallback_padding=2.5,
+        desc_col_idx=1,
+        grid_color=COLOR_GRID
     )
 
-    story.append(stretched_table)
+    story.extend(table_flowables)
     story.extend(footer_elements)
     return story
 

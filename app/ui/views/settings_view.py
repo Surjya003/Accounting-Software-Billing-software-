@@ -9,8 +9,9 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QTabWidget, QFrame,
     QFormLayout, QFileDialog, QApplication, QRadioButton, QButtonGroup,
-    QScrollArea, QCheckBox
+    QScrollArea, QCheckBox, QDoubleSpinBox
 )
+from decimal import Decimal
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
@@ -522,6 +523,24 @@ class SettingsView(QWidget):
         self.chk_show_value_on_challan = QCheckBox("Display Item Unit Prices & Totals on Delivery Challans")
         f_layout2.addRow("", self.chk_show_value_on_challan)
 
+        self.chk_adaptive_font = QCheckBox("Auto-size item text to fill the page")
+        self.chk_adaptive_font.toggled.connect(self._on_adaptive_font_toggled)
+        f_layout2.addRow("", self.chk_adaptive_font)
+
+        self.spn_font_max = QDoubleSpinBox()
+        self.spn_font_max.setRange(6.0, 16.0)
+        self.spn_font_max.setSingleStep(0.25)
+        self.spn_font_max.setValue(13.0)
+        self.spn_font_max.setSuffix(" pt")
+        f_layout2.addRow("Largest item text size:", self.spn_font_max)
+
+        self.spn_font_min = QDoubleSpinBox()
+        self.spn_font_min.setRange(6.0, 16.0)
+        self.spn_font_min.setSingleStep(0.25)
+        self.spn_font_min.setValue(7.5)
+        self.spn_font_min.setSuffix(" pt")
+        f_layout2.addRow("Smallest item text size:", self.spn_font_min)
+
         c_layout2.addLayout(f_layout2)
         layout.addWidget(card_opts)
 
@@ -633,6 +652,10 @@ class SettingsView(QWidget):
         self.chk_print_all_copies.setChecked(bool(getattr(comp, "print_all_copies", False)))
         self.chk_print_hsn_summary.setChecked(bool(getattr(comp, "print_hsn_summary", True)))
         self.chk_show_value_on_challan.setChecked(bool(getattr(comp, "show_value_on_challan", False)))
+        self.chk_adaptive_font.setChecked(bool(getattr(comp, "adaptive_item_font_enabled", True)))
+        self.spn_font_max.setValue(float(getattr(comp, "adaptive_item_font_max", 13.0) or 13.0))
+        self.spn_font_min.setValue(float(getattr(comp, "adaptive_item_font_min", 7.5) or 7.5))
+        self._on_adaptive_font_toggled(self.chk_adaptive_font.isChecked())
 
         if comp.seal_path and Path(comp.seal_path).exists():
             self.current_seal_path = comp.seal_path
@@ -648,7 +671,29 @@ class SettingsView(QWidget):
             self.current_sig_path = None
             self.lbl_sig_path.setText("No signature selected")
 
+    def _on_adaptive_font_toggled(self, checked: bool):
+        self.spn_font_max.setEnabled(checked)
+        self.spn_font_min.setEnabled(checked)
+
     def save_pdf_suite_settings(self):
+        min_sz = self.spn_font_min.value()
+        max_sz = self.spn_font_max.value()
+        if self.chk_adaptive_font.isChecked():
+            if min_sz < 6.0 or max_sz > 16.0:
+                ThemedMessageBox.warning(
+                    self,
+                    "Invalid Font Range",
+                    "Adaptive item text font sizes must be within 6.0 pt and 16.0 pt."
+                )
+                return
+            if min_sz >= max_sz:
+                ThemedMessageBox.warning(
+                    self,
+                    "Invalid Font Range",
+                    "Smallest item text size must be strictly less than Largest item text size."
+                )
+                return
+
         with get_session() as session:
             comp = session.query(CompanyProfile).first()
             if not comp:
@@ -665,6 +710,9 @@ class SettingsView(QWidget):
             comp.print_all_copies = self.chk_print_all_copies.isChecked()
             comp.print_hsn_summary = self.chk_print_hsn_summary.isChecked()
             comp.show_value_on_challan = self.chk_show_value_on_challan.isChecked()
+            comp.adaptive_item_font_enabled = self.chk_adaptive_font.isChecked()
+            comp.adaptive_item_font_max = Decimal(str(round(max_sz, 2)))
+            comp.adaptive_item_font_min = Decimal(str(round(min_sz, 2)))
 
             comp.seal_path = self.current_seal_path
             comp.signature_path = self.current_sig_path
