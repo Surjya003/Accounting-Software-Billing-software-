@@ -8,10 +8,29 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-# Log directory inside data/logs
-LOG_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-LOG_FILE = LOG_DIR / "app.log"
+def _resolve_log_dir() -> Path:
+    """Resolves enterprise log directory, preferring %APPDATA%/BillFlow/logs on Windows with fallback."""
+    appdata = os.environ.get("APPDATA")
+    if appdata and os.name == "nt":
+        target = Path(appdata) / "BillFlow" / "logs"
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            test_file = target / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+            return target
+        except Exception:
+            pass
+    # Fallback to local data/logs
+    local_target = Path(__file__).resolve().parent.parent.parent / "data" / "logs"
+    local_target.mkdir(parents=True, exist_ok=True)
+    return local_target
+
+
+LOG_DIR = _resolve_log_dir()
+LOG_FILE = LOG_DIR / "billflow.log"
+# Backward-compatibility alias for older references
+APP_LOG_FILE = LOG_FILE
 
 _is_configured = False
 

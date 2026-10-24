@@ -14,7 +14,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, asc, and_
 
 from app.database.connection import get_session
-from app.database.models import Party, Voucher, VoucherItem, CompanyProfile, Invoice, ProformaInvoice, Product, Quotation
+from app.database.models import (
+    Party, Voucher, VoucherItem, CompanyProfile, Invoice, ProformaInvoice, 
+    Product, Quotation, BankAccount, Expense, ExpenseCategory, VoucherAllocation
+)
 from app.services.party_service import calculate_party_balance, calculate_all_party_balances
 from app.config import (
     PARTY_TYPE_CUSTOMER, PARTY_TYPE_SUPPLIER, PARTY_TYPE_BOTH,
@@ -36,85 +39,187 @@ def get_outstanding_report(
     with get_session() as session:
         parties = session.query(Party).filter(Party.is_active.is_(True)).order_by(Party.name.asc()).all()
         
+        company = session.query(CompanyProfile).first()
+        allocation_method = getattr(company, "ageing_allocation_method", "Oldest first") or "Oldest first"
+
         target_balance_type = BALANCE_DEBIT if report_type == "Receivables" else BALANCE_CREDIT
         target_voucher_type = VOUCHER_DEBIT if report_type == "Receivables" else VOUCHER_CREDIT
-        
+        offset_voucher_type = VOUCHER_CREDIT if report_type == "Receivables" else VOUCHER_DEBIT
+
         party_rows = []
         grand_total = Decimal("0.00")
         total_bucket_0_30 = Decimal("0.00")
         total_bucket_31_60 = Decimal("0.00")
         total_bucket_61_90 = Decimal("0.00")
         total_bucket_90_plus = Decimal("0.00")
-        
+
         balances = calculate_all_party_balances(session, [p.id for p in parties]) if parties else {}
         for party in parties:
             bal_amt, bal_type = balances.get(party.id, (Decimal("0.00"), target_balance_type))
             if bal_amt <= Decimal(str(min_amount)) or bal_type != target_balance_type:
                 continue
-                
+
             grand_total += bal_amt
-            
-            # Compute Ageing Buckets by scanning historical invoices backwards
-            # Allocate the current outstanding balance to the most recent invoices first (FIFO/LIFO match)
-            invoices = (
+
+            # 1. Gather all target document layers (invoices/bills + opening balance if applicable)
+            # Ordered chronologically (oldest first)
+            debit_layers = []
+
+            # Opening balance
+            op_bal = Decimal(str(party.opening_balance or "0.00"))
+            op_type = party.opening_balance_type or target_balance_type
+            op_date = party.opening_balance_date or as_of_date
+
+            unallocated_offset = Decimal("0.00")
+            if op_bal > Decimal("0.00"):
+                if op_type == target_balance_type:
+                    debit_layers.append({
+                        "voucher_id": None,
+                        "voucher_number": "OPENING",
+                        "voucher_date": op_date,
+                        "reference_no": "OPENING",
+                        "original_amount": op_bal,
+                        "unpaid_amount": op_bal,
+                    })
+                else:
+                    unallocated_offset += op_bal
+
+            # Target vouchers up to as_of_date (oldest first)
+            target_vouchers = (
                 session.query(Voucher)
                 .filter(
                     Voucher.party_id == party.id,
                     Voucher.voucher_type == target_voucher_type,
                     Voucher.voucher_date <= as_of_date
                 )
-                .order_by(desc(Voucher.voucher_date), desc(Voucher.id))
+                .order_by(asc(Voucher.voucher_date), asc(Voucher.id))
                 .all()
             )
-            
-            remaining_to_allocate = bal_amt
+            for v in target_vouchers:
+                amt = Decimal(str(v.total_amount or "0.00"))
+                debit_layers.append({
+                    "voucher_id": v.id,
+                    "voucher_number": v.voucher_number or "",
+                    "voucher_date": v.voucher_date,
+                    "reference_no": v.reference_no or "",
+                    "original_amount": amt,
+                    "unpaid_amount": amt,
+                })
+
+            # Offsetting vouchers up to as_of_date (payments, receipts, credit/debit notes)
+            offset_vouchers = (
+                session.query(Voucher)
+                .filter(
+                    Voucher.party_id == party.id,
+                    Voucher.voucher_type == offset_voucher_type,
+                    Voucher.voucher_date <= as_of_date
+                )
+                .order_by(asc(Voucher.voucher_date), asc(Voucher.id))
+                .all()
+            )
+
+            offset_list = []
+            if unallocated_offset > Decimal("0.00"):
+                offset_list.append({
+                    "voucher_id": None,
+                    "voucher_date": op_date,
+                    "reference_no": "",
+                    "unallocated": unallocated_offset
+                })
+            for ov in offset_vouchers:
+                offset_list.append({
+                    "voucher_id": ov.id,
+                    "voucher_date": ov.voucher_date,
+                    "reference_no": (ov.reference_no or "").strip(),
+                    "unallocated": Decimal(str(ov.total_amount or "0.00"))
+                })
+
+            # Clear existing recorded allocations for this party in voucher_allocations
+            session.query(VoucherAllocation).filter(VoucherAllocation.party_id == party.id).delete()
+
+            # Bill-by-bill allocation
+            # Mode A: Against reference
+            if allocation_method == "Against reference":
+                for off in offset_list:
+                    if off["unallocated"] <= Decimal("0.00"):
+                        continue
+                    ref = off["reference_no"].lower()
+                    if not ref:
+                        continue
+                    # Match against invoice voucher_number or reference_no
+                    for layer in debit_layers:
+                        if layer["unpaid_amount"] <= Decimal("0.00"):
+                            continue
+                        if ref in (layer["voucher_number"].lower(), layer["reference_no"].lower()):
+                            alloc = min(off["unallocated"], layer["unpaid_amount"])
+                            off["unallocated"] -= alloc
+                            layer["unpaid_amount"] -= alloc
+                            session.add(VoucherAllocation(
+                                party_id=party.id,
+                                payment_voucher_id=off["voucher_id"],
+                                invoice_voucher_id=layer["voucher_id"],
+                                allocated_amount=alloc,
+                                allocation_date=off["voucher_date"],
+                                allocation_type="REFERENCE"
+                            ))
+                            if off["unallocated"] <= Decimal("0.00"):
+                                break
+
+            # Mode B: FIFO / Oldest first for all remaining unallocated payment amounts
+            for off in offset_list:
+                if off["unallocated"] <= Decimal("0.00"):
+                    continue
+                for layer in debit_layers:
+                    if layer["unpaid_amount"] <= Decimal("0.00"):
+                        continue
+                    alloc = min(off["unallocated"], layer["unpaid_amount"])
+                    off["unallocated"] -= alloc
+                    layer["unpaid_amount"] -= alloc
+                    session.add(VoucherAllocation(
+                        party_id=party.id,
+                        payment_voucher_id=off["voucher_id"],
+                        invoice_voucher_id=layer["voucher_id"],
+                        allocated_amount=alloc,
+                        allocation_date=off["voucher_date"],
+                        allocation_type="FIFO"
+                    ))
+                    if off["unallocated"] <= Decimal("0.00"):
+                        break
+
+            # Compute buckets from unpaid amounts on debit layers
             b_0_30 = Decimal("0.00")
             b_31_60 = Decimal("0.00")
             b_61_90 = Decimal("0.00")
             b_90_plus = Decimal("0.00")
-            
-            for inv in invoices:
-                if remaining_to_allocate <= Decimal("0.00"):
-                    break
-                    
-                inv_total = Decimal(str(inv.total_amount or "0.00"))
-                allocated = min(remaining_to_allocate, inv_total)
-                remaining_to_allocate -= allocated
-                
-                days_old = (as_of_date - inv.voucher_date).days
+
+            oldest_unpaid_layer = None
+            for layer in debit_layers:
+                unpaid = layer["unpaid_amount"]
+                if unpaid <= Decimal("0.00"):
+                    continue
+                if oldest_unpaid_layer is None:
+                    oldest_unpaid_layer = layer
+                days_old = (as_of_date - layer["voucher_date"]).days
                 if days_old <= 30:
-                    b_0_30 += allocated
+                    b_0_30 += unpaid
                 elif days_old <= 60:
-                    b_31_60 += allocated
+                    b_31_60 += unpaid
                 elif days_old <= 90:
-                    b_61_90 += allocated
+                    b_61_90 += unpaid
                 else:
-                    b_90_plus += allocated
-                    
-            # If there's still remaining balance (e.g. from opening balance or older invoices)
-            if remaining_to_allocate > Decimal("0.00"):
-                op_date = getattr(party, "opening_balance_date", None) or as_of_date
-                op_days = (as_of_date - op_date).days if op_date else 0
-                if op_days <= 30:
-                    b_0_30 += remaining_to_allocate
-                elif op_days <= 60:
-                    b_31_60 += remaining_to_allocate
-                elif op_days <= 90:
-                    b_61_90 += remaining_to_allocate
-                else:
-                    b_90_plus += remaining_to_allocate
-                
+                    b_90_plus += unpaid
+
             total_bucket_0_30 += b_0_30
             total_bucket_31_60 += b_31_60
             total_bucket_61_90 += b_61_90
             total_bucket_90_plus += b_90_plus
-            
+
             credit_days = party.credit_period_days or 30
             overdue_days = 0
-            if invoices:
-                oldest_unpaid_days = (as_of_date - invoices[0].voucher_date).days
-                if oldest_unpaid_days > credit_days:
-                    overdue_days = oldest_unpaid_days - credit_days
+            if oldest_unpaid_layer:
+                days_old = (as_of_date - oldest_unpaid_layer["voucher_date"]).days
+                if days_old > credit_days:
+                    overdue_days = days_old - credit_days
                     
             party_rows.append({
                 "party_id": party.id,
@@ -217,99 +322,252 @@ def get_trial_balance(
     to_date: Optional[date] = None
 ) -> Dict[str, Any]:
     """
-    Trial Balance sheet: Sum of all party balances, debits, and credits to sanity check the books.
+    Trial Balance sheet: Sum of all party balances, nominal/real accounts,
+    bank/cash, taxes, expenses, and opening balances to ensure double-entry parity (Debit == Credit).
     """
     if to_date is None:
         to_date = date.today()
-        
+
     with get_session() as session:
+        company = session.query(CompanyProfile).first()
+        company_sc = company.state_code if company and company.state_code else "27"
+
         parties = session.query(Party).filter(Party.is_active.is_(True)).order_by(Party.name.asc()).all()
-        
-        rows = []
-        total_op_dr = Decimal("0.00")
-        total_op_cr = Decimal("0.00")
-        total_period_dr = Decimal("0.00")
-        total_period_cr = Decimal("0.00")
-        total_cl_dr = Decimal("0.00")
-        total_cl_cr = Decimal("0.00")
-        
+        bank_accounts = session.query(BankAccount).filter(BankAccount.is_active.is_(True)).all()
+        vouchers = session.query(Voucher).all()
+        expenses = session.query(Expense).join(ExpenseCategory, Expense.category_id == ExpenseCategory.id, isouter=True).all()
+
+        accounts: Dict[str, Dict[str, Any]] = {}
+
+        def record(
+            acc_name: str,
+            acc_type: str,
+            pid: Optional[int] = None,
+            op_dr: Decimal = Decimal("0.00"),
+            op_cr: Decimal = Decimal("0.00"),
+            p_dr: Decimal = Decimal("0.00"),
+            p_cr: Decimal = Decimal("0.00")
+        ):
+            if acc_name not in accounts:
+                accounts[acc_name] = {
+                    "party_id": pid,
+                    "party_name": acc_name,
+                    "party_type": acc_type,
+                    "op_dr": Decimal("0.00"),
+                    "op_cr": Decimal("0.00"),
+                    "period_dr": Decimal("0.00"),
+                    "period_cr": Decimal("0.00"),
+                    "cl_dr": Decimal("0.00"),
+                    "cl_cr": Decimal("0.00"),
+                }
+            accounts[acc_name]["op_dr"] += op_dr
+            accounts[acc_name]["op_cr"] += op_cr
+            accounts[acc_name]["period_dr"] += p_dr
+            accounts[acc_name]["period_cr"] += p_cr
+
+        party_map = {}
         for p in parties:
-            # 1. Opening Balance as of from_date
-            init_op = Decimal(str(p.opening_balance or "0.00"))
-            net_op = init_op if p.opening_balance_type == BALANCE_DEBIT else -init_op
-            
-            if from_date:
-                prior_vchs = session.query(Voucher).filter(
-                    Voucher.party_id == p.id,
-                    Voucher.voucher_date < from_date
-                ).all()
-                for pv in prior_vchs:
-                    net_op += (Decimal(str(pv.debit_amount or "0.00")) - Decimal(str(pv.credit_amount or "0.00")))
-                    
-            op_amt = abs(net_op)
-            op_type = BALANCE_DEBIT if net_op >= Decimal("0.00") else BALANCE_CREDIT
-            if op_type == BALANCE_DEBIT:
-                total_op_dr += op_amt
+            p_sc = p.state_code or company_sc
+            party_map[p.id] = (p.name, p.party_type, p_sc)
+            op = Decimal(str(p.opening_balance or "0.00"))
+            if p.opening_balance_type in (BALANCE_DEBIT, "Dr", "Debit"):
+                record(p.name, p.party_type, pid=p.id, op_dr=op)
             else:
-                total_op_cr += op_amt
-                
-            # 2. Period Debits & Credits
-            query = session.query(
-                func.sum(Voucher.debit_amount),
-                func.sum(Voucher.credit_amount)
-            ).filter(Voucher.party_id == p.id)
-            
-            if from_date:
-                query = query.filter(Voucher.voucher_date >= from_date)
-            if to_date:
-                query = query.filter(Voucher.voucher_date <= to_date)
-                
-            p_dr_sum, p_cr_sum = query.first()
-            p_dr = Decimal(str(p_dr_sum or "0.00"))
-            p_cr = Decimal(str(p_cr_sum or "0.00"))
-            
-            total_period_dr += p_dr
-            total_period_cr += p_cr
-            
-            # 3. Closing Balance
-            net_cl = net_op + p_dr - p_cr
-            cl_amt = abs(net_cl)
-            cl_type = BALANCE_DEBIT if net_cl >= Decimal("0.00") else BALANCE_CREDIT
-            if cl_type == BALANCE_DEBIT:
-                total_cl_dr += cl_amt
+                record(p.name, p.party_type, pid=p.id, op_cr=op)
+
+        for b in bank_accounts:
+            b_op = Decimal(str(b.opening_balance or "0.00"))
+            b_type = "Bank" if b.account_type == "Bank" else "Cash"
+            b_name = b.account_name or ("Cash-in-Hand" if b_type == "Cash" else "Bank Accounts")
+            record(b_name, b_type, op_dr=b_op)
+
+        # Process vouchers
+        for v in vouchers:
+            v_date = v.voucher_date
+            if to_date and v_date > to_date:
+                continue
+
+            is_prior = bool(from_date and v_date < from_date)
+
+            p_info = party_map.get(v.party_id)
+            if p_info:
+                p_name, p_type, p_sc = p_info
             else:
-                total_cl_cr += cl_amt
-                
-            # Only include if has activity or balance
-            if op_amt > Decimal("0.00") or p_dr > Decimal("0.00") or p_cr > Decimal("0.00") or cl_amt > Decimal("0.00"):
+                p_name, p_type, p_sc = f"Party #{v.party_id}", "Party", company_sc
+
+            dr = Decimal(str(v.debit_amount or "0.00"))
+            cr = Decimal(str(v.credit_amount or "0.00"))
+            untaxed = Decimal(str(v.amount_untaxed or "0.00"))
+            cgst = Decimal(str(v.cgst_amount or "0.00"))
+            sgst = Decimal(str(v.sgst_amount or "0.00"))
+            igst = Decimal(str(v.igst_amount or "0.00"))
+            tax = Decimal(str(v.total_tax or "0.00"))
+            total = Decimal(str(v.total_amount or "0.00"))
+            narr = v.narration or ""
+            num = v.voucher_number or ""
+
+            # If tax > 0 but components are 0, split by state
+            if tax > 0 and (cgst + sgst + igst) == 0:
+                if p_sc == company_sc:
+                    half = (tax / Decimal("2")).quantize(Decimal("0.01"))
+                    cgst = half
+                    sgst = tax - half
+                else:
+                    igst = tax
+
+            def post(acc: str, a_type: str, d_amt: Decimal = Decimal("0.00"), c_amt: Decimal = Decimal("0.00"), party_id_val: Optional[int] = None):
+                if d_amt == 0 and c_amt == 0:
+                    return
+                if is_prior:
+                    record(acc, a_type, pid=party_id_val, op_dr=d_amt, op_cr=c_amt)
+                else:
+                    record(acc, a_type, pid=party_id_val, p_dr=d_amt, p_cr=c_amt)
+
+            is_sale = v.is_tax_invoice or num.startswith("INV") or "Tax Invoice" in narr or "Invoice" in narr
+            is_purchase = num.startswith("PUR") or "Goods Receipt" in narr
+            is_sales_return = num.startswith("CN") or "Credit Note" in narr
+            is_purchase_return = num.startswith("DN") or "Debit Note" in narr
+
+            if is_sale:
+                post(p_name, p_type, d_amt=total, party_id_val=v.party_id)
+                post("Sales Account", "Sales Account", c_amt=untaxed)
+                if cgst > 0: post("Output CGST", "Duties & Taxes", c_amt=cgst)
+                if sgst > 0: post("Output SGST", "Duties & Taxes", c_amt=sgst)
+                if igst > 0: post("Output IGST", "Duties & Taxes", c_amt=igst)
+                diff = total - (untaxed + cgst + sgst + igst)
+                if diff > 0: post("Round-off", "Indirect Income", c_amt=diff)
+                elif diff < 0: post("Round-off", "Indirect Expense", d_amt=-diff)
+
+            elif is_purchase:
+                post(p_name, p_type, c_amt=total, party_id_val=v.party_id)
+                post("Purchases Account", "Purchase Account", d_amt=untaxed)
+                if cgst > 0: post("Input CGST", "Duties & Taxes", d_amt=cgst)
+                if sgst > 0: post("Input SGST", "Duties & Taxes", d_amt=sgst)
+                if igst > 0: post("Input IGST", "Duties & Taxes", d_amt=igst)
+                diff = total - (untaxed + cgst + sgst + igst)
+                if diff > 0: post("Round-off", "Indirect Expense", d_amt=diff)
+                elif diff < 0: post("Round-off", "Indirect Income", c_amt=-diff)
+
+            elif is_sales_return:
+                post(p_name, p_type, c_amt=total, party_id_val=v.party_id)
+                post("Sales Returns", "Sales Account", d_amt=untaxed)
+                if cgst > 0: post("Output CGST", "Duties & Taxes", d_amt=cgst)
+                if sgst > 0: post("Output SGST", "Duties & Taxes", d_amt=sgst)
+                if igst > 0: post("Output IGST", "Duties & Taxes", d_amt=igst)
+                diff = total - (untaxed + cgst + sgst + igst)
+                if diff > 0: post("Round-off", "Indirect Expense", d_amt=diff)
+                elif diff < 0: post("Round-off", "Indirect Income", c_amt=-diff)
+
+            elif is_purchase_return:
+                post(p_name, p_type, d_amt=total, party_id_val=v.party_id)
+                post("Purchase Returns", "Purchase Account", c_amt=untaxed)
+                if cgst > 0: post("Input CGST", "Duties & Taxes", c_amt=cgst)
+                if sgst > 0: post("Input SGST", "Duties & Taxes", c_amt=sgst)
+                if igst > 0: post("Input IGST", "Duties & Taxes", c_amt=igst)
+                diff = total - (untaxed + cgst + sgst + igst)
+                if diff > 0: post("Round-off", "Indirect Income", c_amt=diff)
+                elif diff < 0: post("Round-off", "Indirect Expense", d_amt=-diff)
+
+            elif v.voucher_type == VOUCHER_DEBIT or v.voucher_type == "Debit":
+                amt = dr if dr > 0 else total
+                post(p_name, p_type, d_amt=amt, party_id_val=v.party_id)
+                contra = "Cash-in-Hand" if v.payment_mode == "Cash" else "Bank Accounts"
+                post(contra, "Bank/Cash", c_amt=amt)
+
+            elif v.voucher_type == VOUCHER_CREDIT or v.voucher_type == "Credit":
+                amt = cr if cr > 0 else total
+                post(p_name, p_type, c_amt=amt, party_id_val=v.party_id)
+                contra = "Cash-in-Hand" if v.payment_mode == "Cash" else "Bank Accounts"
+                post(contra, "Bank/Cash", d_amt=amt)
+
+            elif v.voucher_type == VOUCHER_JOURNAL or v.voucher_type == "Journal":
+                if dr > 0:
+                    post(p_name, p_type, d_amt=dr, party_id_val=v.party_id)
+                    post("Journal Adjustment", "Equity", c_amt=dr)
+                if cr > 0:
+                    post(p_name, p_type, c_amt=cr, party_id_val=v.party_id)
+                    post("Journal Adjustment", "Equity", d_amt=cr)
+
+        # Process Expenses
+        for e in expenses:
+            e_date = e.expense_date
+            if to_date and e_date > to_date:
+                continue
+            is_prior = bool(from_date and e_date < from_date)
+            cat_name = e.category.name if e.category else "Miscellaneous"
+            e_tot = Decimal(str(e.total_amount or "0.00"))
+            contra = "Cash-in-Hand" if e.payment_mode == "Cash" else "Bank Accounts"
+            if is_prior:
+                record(f"Expense - {cat_name}", "Expense", op_dr=e_tot)
+                record(contra, "Bank/Cash", op_cr=e_tot)
+            else:
+                record(f"Expense - {cat_name}", "Expense", p_dr=e_tot)
+                record(contra, "Bank/Cash", p_cr=e_tot)
+
+        # Opening Balance Equity to ensure opening balances balance
+        tot_op_dr = sum(a["op_dr"] for a in accounts.values())
+        tot_op_cr = sum(a["op_cr"] for a in accounts.values())
+        op_diff = tot_op_dr - tot_op_cr
+        if op_diff > 0:
+            record("Opening Balance Equity", "Equity", op_cr=op_diff)
+        elif op_diff < 0:
+            record("Opening Balance Equity", "Equity", op_dr=-op_diff)
+
+        # Calculate closing balances and format rows
+        rows = []
+        tot_op_dr_final = Decimal("0.00")
+        tot_op_cr_final = Decimal("0.00")
+        tot_p_dr_final = Decimal("0.00")
+        tot_p_cr_final = Decimal("0.00")
+        tot_cl_dr_final = Decimal("0.00")
+        tot_cl_cr_final = Decimal("0.00")
+
+        for name, a in sorted(accounts.items(), key=lambda x: (x[1]["party_type"] not in ("Customer", "Supplier", "Both"), x[0])):
+            net = (a["op_dr"] - a["op_cr"]) + (a["period_dr"] - a["period_cr"])
+            if net >= 0:
+                cl_dr = net
+                cl_cr = Decimal("0.00")
+            else:
+                cl_dr = Decimal("0.00")
+                cl_cr = -net
+
+            a["cl_dr"] = cl_dr
+            a["cl_cr"] = cl_cr
+
+            if a["op_dr"] > 0 or a["op_cr"] > 0 or a["period_dr"] > 0 or a["period_cr"] > 0 or cl_dr > 0 or cl_cr > 0:
                 rows.append({
-                    "party_id": p.id,
-                    "party_name": p.name,
-                    "party_type": p.party_type,
-                    "op_dr": float(op_amt) if op_type == BALANCE_DEBIT else 0.0,
-                    "op_cr": float(op_amt) if op_type == BALANCE_CREDIT else 0.0,
-                    "period_dr": float(p_dr),
-                    "period_cr": float(p_cr),
-                    "cl_dr": float(cl_amt) if cl_type == BALANCE_DEBIT else 0.0,
-                    "cl_cr": float(cl_amt) if cl_type == BALANCE_CREDIT else 0.0
+                    "party_id": a["party_id"],
+                    "party_name": a["party_name"],
+                    "party_type": a["party_type"],
+                    "op_dr": float(a["op_dr"]),
+                    "op_cr": float(a["op_cr"]),
+                    "period_dr": float(a["period_dr"]),
+                    "period_cr": float(a["period_cr"]),
+                    "cl_dr": float(cl_dr),
+                    "cl_cr": float(cl_cr),
                 })
-                
-        # Verification check
-        diff = abs(total_cl_dr - total_cl_cr)
-        is_balanced = (diff < Decimal("0.01")) or (total_period_dr == total_period_cr)
-        
+                tot_op_dr_final += a["op_dr"]
+                tot_op_cr_final += a["op_cr"]
+                tot_p_dr_final += a["period_dr"]
+                tot_p_cr_final += a["period_cr"]
+                tot_cl_dr_final += cl_dr
+                tot_cl_cr_final += cl_cr
+
+        diff = abs(tot_cl_dr_final - tot_cl_cr_final)
+        is_balanced = (diff < Decimal("0.01")) or (tot_p_dr_final == tot_p_cr_final)
+
         return {
             "from_date": from_date,
             "to_date": to_date,
             "rows": rows,
-            "total_op_dr": float(total_op_dr),
-            "total_op_cr": float(total_op_cr),
-            "total_period_dr": float(total_period_dr),
-            "total_period_cr": float(total_period_cr),
-            "total_cl_dr": float(total_cl_dr),
-            "total_cl_cr": float(total_cl_cr),
+            "total_op_dr": float(tot_op_dr_final),
+            "total_op_cr": float(tot_op_cr_final),
+            "total_period_dr": float(tot_p_dr_final),
+            "total_period_cr": float(tot_p_cr_final),
+            "total_cl_dr": float(tot_cl_dr_final),
+            "total_cl_cr": float(tot_cl_cr_final),
             "difference": float(diff),
-            "is_balanced": is_balanced
+            "is_balanced": is_balanced,
         }
 
 def get_gst_summary(
@@ -544,6 +802,17 @@ def get_dashboard_kpis() -> Dict[str, Any]:
             "recent_invoices": recent_invoices_list,
             "low_stock_products": low_stock_list
         }
+
+        # Unified inventory valuation across P&L, stock report, and dashboard (BUG-06)
+        try:
+            from app.services.inventory_valuation import calculate_inventory_valuation
+            val_res = calculate_inventory_valuation(session)
+            res["total_stock_value"] = float(val_res["total_closing_stock_value"])
+            res["stock_valuation_method"] = val_res["method_display"]
+        except Exception:
+            res["total_stock_value"] = 0.0
+            res["stock_valuation_method"] = "Weighted Average Cost (WAC)"
+
         res["kpis"] = res
         return res
 

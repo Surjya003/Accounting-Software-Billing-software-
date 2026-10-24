@@ -1,14 +1,13 @@
 """
 Cash & Bank Book View
 Track cash-in-hand and bank account balances with receipt/payment/contra entries.
-Inspired by TallyPrime's Cash Book & Bank Book and Vyapar's Cash & Bank management.
 """
 from datetime import date
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QFrame,
     QComboBox, QLineEdit, QDateEdit, QTextEdit, QFormLayout,
-    QDialog, QDialogButtonBox, QMessageBox, QTabWidget, QSplitter
+    QDialog, QTabWidget, QSplitter
 )
 from PySide6.QtCore import Qt, Signal, QDate
 from PySide6.QtGui import QFont, QColor
@@ -19,6 +18,10 @@ from app.services.cashbank_service import (
 )
 from app.config import CURRENCY_SYMBOL
 from app.ui.widgets.stat_card import StatCard
+from app.ui.theme import theme_manager
+from app.ui.theme.widgets import (
+    PageHeaderWidget, CardFrame, ThemedMessageBox, configure_dialog_window_flags
+)
 
 
 class CashBankView(QWidget):
@@ -30,36 +33,34 @@ class CashBankView(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(14)
 
         # ── Header ──
-        header = QHBoxLayout()
-        lbl_title = QLabel("🏦 Cash & Bank Book")
-        lbl_title.setStyleSheet("font-size: 20px; font-weight: 700; color: #1B1B18;")
-        header.addWidget(lbl_title)
-        header.addStretch()
+        self.header_widget = PageHeaderWidget(
+            title="Cash & Bank Book",
+            subtitle="Track cash-in-hand and bank balances with receipt, payment, and contra entries",
+            action_text="Record Transaction",
+            action_icon="plus",
+            action_callback=self.open_add_transaction_dialog
+        )
 
-        btn_add_acc = QPushButton("➕ Add Account")
-        btn_add_acc.setObjectName("PrimaryBtn")
-        btn_add_acc.setStyleSheet("padding: 8px 18px;")
+        btn_add_acc = QPushButton("Add Account")
+        btn_add_acc.setIcon(theme_manager.get_icon("plus", size=16))
+        btn_add_acc.setProperty("variant", "secondary")
+        btn_add_acc.setFixedHeight(36)
         btn_add_acc.clicked.connect(self.open_add_account_dialog)
-        header.addWidget(btn_add_acc)
+        self.header_widget.add_custom_action(btn_add_acc)
 
-        btn_add_txn = QPushButton("📝 Record Transaction")
-        btn_add_txn.setObjectName("SuccessBtn")
-        btn_add_txn.setStyleSheet("padding: 8px 18px;")
-        btn_add_txn.clicked.connect(self.open_add_transaction_dialog)
-        header.addWidget(btn_add_txn)
-        layout.addLayout(header)
+        layout.addWidget(self.header_widget)
 
         # ── KPI Cards (Account Balances) ──
         self.kpi_box = QHBoxLayout()
         self.kpi_box.setSpacing(12)
-        self.card_cash = StatCard("Cash-in-Hand", f"{CURRENCY_SYMBOL}0.00")
-        self.card_bank = StatCard("Total Bank Balance", f"{CURRENCY_SYMBOL}0.00")
-        self.card_total = StatCard("Combined Balance", f"{CURRENCY_SYMBOL}0.00")
-        self.card_txn_count = StatCard("Transactions (This Month)", "0")
+        self.card_cash = StatCard("Cash-in-Hand", f"{CURRENCY_SYMBOL}0.00", "Physical cash on hand", token_name="success")
+        self.card_bank = StatCard("Total Bank Balance", f"{CURRENCY_SYMBOL}0.00", "All bank accounts", token_name="accent")
+        self.card_total = StatCard("Combined Liquidity", f"{CURRENCY_SYMBOL}0.00", "Cash + Bank balance", token_name="info")
+        self.card_txn_count = StatCard("Monthly Transactions", "0", "This month activity", token_name="text_primary")
         for card in [self.card_cash, self.card_bank, self.card_total, self.card_txn_count]:
             self.kpi_box.addWidget(card)
         layout.addLayout(self.kpi_box)
@@ -70,18 +71,18 @@ class CashBankView(QWidget):
         # Tab 1: Account Summary
         self.tab_accounts = QWidget()
         self.init_accounts_tab()
-        self.tabs.addTab(self.tab_accounts, "📊 Account Balances")
+        self.tabs.addTab(self.tab_accounts, "Account Balances")
 
         # Tab 2: Transaction Ledger
         self.tab_transactions = QWidget()
         self.init_transactions_tab()
-        self.tabs.addTab(self.tab_transactions, "📖 Transaction Ledger")
+        self.tabs.addTab(self.tab_transactions, "Transaction Ledger")
 
         layout.addWidget(self.tabs, 1)
 
     def init_accounts_tab(self):
         layout = QVBoxLayout(self.tab_accounts)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(8, 12, 8, 8)
 
         self.acc_table = QTableWidget()
         self.acc_table.setColumnCount(7)
@@ -90,17 +91,24 @@ class CashBankView(QWidget):
             "Opening Bal.", "Current Balance", "Total Receipts"
         ])
         self.acc_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for i in range(1, 7):
+            self.acc_table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        self.acc_table.verticalHeader().setDefaultSectionSize(36)
+        self.acc_table.verticalHeader().setVisible(False)
         self.acc_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.acc_table.setEditTriggers(QTableWidget.NoEditTriggers)
         layout.addWidget(self.acc_table)
 
     def init_transactions_tab(self):
         layout = QVBoxLayout(self.tab_transactions)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(8, 12, 8, 8)
+        layout.setSpacing(10)
 
         # Filters
-        filter_box = QHBoxLayout()
-        filter_box.setSpacing(8)
+        filter_frame = CardFrame()
+        filter_box = QHBoxLayout(filter_frame)
+        filter_box.setContentsMargins(12, 8, 12, 8)
+        filter_box.setSpacing(10)
 
         filter_box.addWidget(QLabel("Account:"))
         self.combo_acc = QComboBox()
@@ -111,21 +119,24 @@ class CashBankView(QWidget):
         self.date_from = QDateEdit()
         self.date_from.setCalendarPopup(True)
         self.date_from.setDate(QDate(date.today().year, date.today().month, 1))
+        self.date_from.setDisplayFormat("dd-MM-yyyy")
         filter_box.addWidget(self.date_from)
 
         filter_box.addWidget(QLabel("To:"))
         self.date_to = QDateEdit()
         self.date_to.setCalendarPopup(True)
         self.date_to.setDate(QDate.currentDate())
+        self.date_to.setDisplayFormat("dd-MM-yyyy")
         filter_box.addWidget(self.date_to)
 
-        btn_filter = QPushButton("🔍 Filter")
-        btn_filter.setObjectName("SecondaryBtn")
+        btn_filter = QPushButton("Filter")
+        btn_filter.setIcon(theme_manager.get_icon("refresh", size=16))
+        btn_filter.setProperty("variant", "secondary")
         btn_filter.clicked.connect(self.load_transactions)
         filter_box.addWidget(btn_filter)
 
         filter_box.addStretch()
-        layout.addLayout(filter_box)
+        layout.addWidget(filter_frame)
 
         # Transaction Table
         self.txn_table = QTableWidget()
@@ -135,19 +146,24 @@ class CashBankView(QWidget):
             "Receipt (In)", "Payment (Out)", "Running Bal.", "Reference"
         ])
         self.txn_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        for i in [0, 1, 2, 4, 5, 6, 7]:
+            self.txn_table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        self.txn_table.verticalHeader().setDefaultSectionSize(36)
+        self.txn_table.verticalHeader().setVisible(False)
         self.txn_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.txn_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        layout.addWidget(self.txn_table)
+        layout.addWidget(self.txn_table, 1)
 
         # Bottom
         bottom = QHBoxLayout()
         self.lbl_summary = QLabel("")
-        self.lbl_summary.setStyleSheet("font-family: Consolas, monospace; font-size: 13px; font-weight: bold;")
+        self.lbl_summary.setFont(theme_manager.get_font("body", bold=True))
         bottom.addWidget(self.lbl_summary)
         bottom.addStretch()
 
-        btn_del = QPushButton("🗑️ Delete Selected")
-        btn_del.setObjectName("DestructiveBtn")
+        btn_del = QPushButton("Delete Selected")
+        btn_del.setIcon(theme_manager.get_icon("trash", token_color="danger", size=16))
+        btn_del.setProperty("variant", "danger")
         btn_del.clicked.connect(self.delete_selected_txn)
         bottom.addWidget(btn_del)
         layout.addLayout(bottom)
@@ -167,20 +183,21 @@ class CashBankView(QWidget):
             for row, acc in enumerate(accounts):
                 self.acc_table.setItem(row, 0, QTableWidgetItem(acc["account_name"]))
                 self.acc_table.setItem(row, 1, QTableWidgetItem(acc["account_type"]))
-                self.acc_table.setItem(row, 2, QTableWidgetItem(acc.get("bank_name", "")))
-                self.acc_table.setItem(row, 3, QTableWidgetItem(acc.get("account_number", "")))
+                self.acc_table.setItem(row, 2, QTableWidgetItem(acc.get("bank_name", "") or "—"))
+                self.acc_table.setItem(row, 3, QTableWidgetItem(acc.get("account_number", "") or "—"))
 
                 op_item = QTableWidgetItem(f"{CURRENCY_SYMBOL}{acc['opening_balance']:,.2f}")
                 op_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.acc_table.setItem(row, 4, op_item)
 
-                bal_item = QTableWidgetItem(f"{CURRENCY_SYMBOL}{acc['current_balance']:,.2f}")
+                bal = acc['current_balance']
+                bal_item = QTableWidgetItem(f"{CURRENCY_SYMBOL}{bal:,.2f}")
                 bal_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                bal_item.setFont(QFont("Consolas", 12, QFont.Bold))
-                if acc['current_balance'] >= 0:
-                    bal_item.setForeground(QColor("#2F6844"))
+                bal_item.setFont(theme_manager.get_font("body", bold=True))
+                if bal >= 0:
+                    bal_item.setForeground(theme_manager.qcolor("success"))
                 else:
-                    bal_item.setForeground(QColor("#8B2635"))
+                    bal_item.setForeground(theme_manager.qcolor("danger"))
                 self.acc_table.setItem(row, 5, bal_item)
 
                 rec_item = QTableWidgetItem(f"{CURRENCY_SYMBOL}{acc['total_receipts']:,.2f}")
@@ -211,7 +228,6 @@ class CashBankView(QWidget):
         self.txn_table.setUpdatesEnabled(False)
         try:
             if acc_id:
-                # Use ledger view with running balance
                 ledger = get_account_ledger(acc_id, start, end)
                 rows = ledger["transactions"]
                 self.txn_table.setRowCount(len(rows))
@@ -224,22 +240,24 @@ class CashBankView(QWidget):
                     self.txn_table.setItem(row, 2, QTableWidgetItem(txn.get("txn_type", "")))
                     self.txn_table.setItem(row, 3, QTableWidgetItem(txn.get("description", "")))
 
-                    r_item = QTableWidgetItem(f"{CURRENCY_SYMBOL}{txn['receipt_amount']:,.2f}" if txn['receipt_amount'] > 0 else "")
+                    r_amt = txn['receipt_amount']
+                    r_item = QTableWidgetItem(f"{CURRENCY_SYMBOL}{r_amt:,.2f}" if r_amt > 0 else "")
                     r_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    r_item.setForeground(QColor("#2F6844"))
+                    r_item.setForeground(theme_manager.qcolor("success"))
                     self.txn_table.setItem(row, 4, r_item)
 
-                    p_item = QTableWidgetItem(f"{CURRENCY_SYMBOL}{txn['payment_amount']:,.2f}" if txn['payment_amount'] > 0 else "")
+                    p_amt = txn['payment_amount']
+                    p_item = QTableWidgetItem(f"{CURRENCY_SYMBOL}{p_amt:,.2f}" if p_amt > 0 else "")
                     p_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    p_item.setForeground(QColor("#8B2635"))
+                    p_item.setForeground(theme_manager.qcolor("danger"))
                     self.txn_table.setItem(row, 5, p_item)
 
                     bal_item = QTableWidgetItem(f"{CURRENCY_SYMBOL}{txn.get('running_balance', 0):,.2f}")
                     bal_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    bal_item.setFont(QFont("Consolas", 11, QFont.Bold))
+                    bal_item.setFont(theme_manager.get_font("body", bold=True))
                     self.txn_table.setItem(row, 6, bal_item)
 
-                    self.txn_table.setItem(row, 7, QTableWidgetItem(txn.get("reference_no", "")))
+                    self.txn_table.setItem(row, 7, QTableWidgetItem(txn.get("reference_no", "") or "—"))
                     self.txn_table.item(row, 0).setData(Qt.UserRole, txn.get("id"))
 
                 self.lbl_summary.setText(
@@ -249,7 +267,6 @@ class CashBankView(QWidget):
                     f"Closing: {CURRENCY_SYMBOL}{ledger['closing_balance']:,.2f}"
                 )
             else:
-                # All accounts: no running balance
                 txns = get_transactions(start_date=start, end_date=end)
                 self.txn_table.setRowCount(len(txns))
                 total_r = total_p = 0.0
@@ -262,18 +279,20 @@ class CashBankView(QWidget):
                     self.txn_table.setItem(row, 2, QTableWidgetItem(txn.get("txn_type", "")))
                     self.txn_table.setItem(row, 3, QTableWidgetItem(txn.get("description", "")))
 
-                    r_item = QTableWidgetItem(f"{CURRENCY_SYMBOL}{txn['receipt_amount']:,.2f}" if txn['receipt_amount'] > 0 else "")
+                    r_amt = txn['receipt_amount']
+                    r_item = QTableWidgetItem(f"{CURRENCY_SYMBOL}{r_amt:,.2f}" if r_amt > 0 else "")
                     r_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    r_item.setForeground(QColor("#2F6844"))
+                    r_item.setForeground(theme_manager.qcolor("success"))
                     self.txn_table.setItem(row, 4, r_item)
 
-                    p_item = QTableWidgetItem(f"{CURRENCY_SYMBOL}{txn['payment_amount']:,.2f}" if txn['payment_amount'] > 0 else "")
+                    p_amt = txn['payment_amount']
+                    p_item = QTableWidgetItem(f"{CURRENCY_SYMBOL}{p_amt:,.2f}" if p_amt > 0 else "")
                     p_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    p_item.setForeground(QColor("#8B2635"))
+                    p_item.setForeground(theme_manager.qcolor("danger"))
                     self.txn_table.setItem(row, 5, p_item)
 
-                    self.txn_table.setItem(row, 6, QTableWidgetItem(""))  # No running balance for all
-                    self.txn_table.setItem(row, 7, QTableWidgetItem(txn.get("reference_no", "")))
+                    self.txn_table.setItem(row, 6, QTableWidgetItem("—"))
+                    self.txn_table.setItem(row, 7, QTableWidgetItem(txn.get("reference_no", "") or "—"))
                     self.txn_table.item(row, 0).setData(Qt.UserRole, txn.get("id"))
 
                     total_r += txn['receipt_amount']
@@ -298,7 +317,6 @@ class CashBankView(QWidget):
             self.card_bank.set_value(f"{CURRENCY_SYMBOL}{bank_total:,.2f}")
             self.card_total.set_value(f"{CURRENCY_SYMBOL}{combined:,.2f}")
 
-            # Count transactions this month
             start_m = date.today().replace(day=1)
             txns = get_transactions(start_date=start_m, end_date=date.today())
             self.card_txn_count.set_value(str(len(txns)))
@@ -318,32 +336,37 @@ class CashBankView(QWidget):
     def delete_selected_txn(self):
         row = self.txn_table.currentRow()
         if row < 0:
-            QMessageBox.warning(self, "No Selection", "Please select a transaction to delete.")
+            ThemedMessageBox.warning(self, "No Selection", "Please select a transaction to delete.")
             return
         txn_id = self.txn_table.item(row, 0).data(Qt.UserRole)
         if not txn_id:
             return
-        res = QMessageBox.question(
+        if ThemedMessageBox.question(
             self, "Confirm Delete",
-            "Delete this transaction? This cannot be undone.",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if res == QMessageBox.Yes:
+            "Delete this transaction? This cannot be undone."
+        ):
             try:
                 delete_transaction(txn_id)
                 self.load_data()
             except Exception as e:
-                QMessageBox.critical(self, "Error", str(e))
+                ThemedMessageBox.critical(self, "Error", str(e))
 
 
 class AddAccountDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Add Cash/Bank Account")
-        self.setMinimumWidth(450)
+        configure_dialog_window_flags(self, min_width=500, min_height=420)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        title = QLabel("Add New Cash/Bank Account")
+        title.setFont(theme_manager.get_font("title", bold=True))
+        layout.addWidget(title)
+
         form = QFormLayout()
-        form.setSpacing(10)
+        form.setSpacing(12)
 
         self.inp_name = QLineEdit()
         self.inp_name.setPlaceholderText("e.g. SBI Current A/C, Petty Cash")
@@ -354,15 +377,19 @@ class AddAccountDialog(QDialog):
         form.addRow("Account Type:", self.combo_type)
 
         self.inp_bank = QLineEdit()
+        self.inp_bank.setPlaceholderText("e.g. State Bank of India")
         form.addRow("Bank Name:", self.inp_bank)
 
         self.inp_ac_no = QLineEdit()
+        self.inp_ac_no.setPlaceholderText("Account Number")
         form.addRow("Account Number:", self.inp_ac_no)
 
         self.inp_ifsc = QLineEdit()
+        self.inp_ifsc.setPlaceholderText("e.g. SBIN0001234")
         form.addRow("IFSC Code:", self.inp_ifsc)
 
         self.inp_branch = QLineEdit()
+        self.inp_branch.setPlaceholderText("Branch Name")
         form.addRow("Branch:", self.inp_branch)
 
         self.inp_opening = QLineEdit()
@@ -372,10 +399,23 @@ class AddAccountDialog(QDialog):
 
         layout.addLayout(form)
 
-        btn_box = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        btn_box.accepted.connect(self.save_account)
-        btn_box.rejected.connect(self.reject)
-        layout.addWidget(btn_box)
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.setProperty("variant", "secondary")
+        btn_cancel.setFixedHeight(36)
+        btn_cancel.clicked.connect(self.reject)
+        btn_box.addWidget(btn_cancel)
+
+        btn_save = QPushButton("Save Account")
+        btn_save.setIcon(theme_manager.get_icon("save", token_color="text_on_accent", size=16))
+        btn_save.setProperty("variant", "primary")
+        btn_save.setFixedHeight(36)
+        btn_save.clicked.connect(self.save_account)
+        btn_box.addWidget(btn_save)
+
+        layout.addLayout(btn_box)
 
     def save_account(self):
         try:
@@ -389,20 +429,27 @@ class AddAccountDialog(QDialog):
                 "opening_balance": float(self.inp_opening.text().strip() or 0),
             }
             create_account(data)
-            QMessageBox.information(self, "Success", "Account created successfully!")
+            ThemedMessageBox.information(self, "Success", "Account created successfully!")
             self.accept()
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            ThemedMessageBox.critical(self, "Error", str(e))
 
 
 class AddTransactionDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Record Cash/Bank Transaction")
-        self.setMinimumWidth(500)
+        configure_dialog_window_flags(self, min_width=520, min_height=480)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        title = QLabel("Record Transaction")
+        title.setFont(theme_manager.get_font("title", bold=True))
+        layout.addWidget(title)
+
         form = QFormLayout()
-        form.setSpacing(10)
+        form.setSpacing(12)
 
         self.combo_acc = QComboBox()
         accounts = get_all_accounts()
@@ -413,6 +460,7 @@ class AddTransactionDialog(QDialog):
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDate(QDate.currentDate())
+        self.date_edit.setDisplayFormat("dd-MM-yyyy")
         form.addRow("Date:", self.date_edit)
 
         self.combo_type = QComboBox()
@@ -448,10 +496,23 @@ class AddTransactionDialog(QDialog):
 
         layout.addLayout(form)
 
-        btn_box = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        btn_box.accepted.connect(self.save_transaction)
-        btn_box.rejected.connect(self.reject)
-        layout.addWidget(btn_box)
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.setProperty("variant", "secondary")
+        btn_cancel.setFixedHeight(36)
+        btn_cancel.clicked.connect(self.reject)
+        btn_box.addWidget(btn_cancel)
+
+        btn_save = QPushButton("Save Transaction")
+        btn_save.setIcon(theme_manager.get_icon("save", token_color="text_on_accent", size=16))
+        btn_save.setProperty("variant", "primary")
+        btn_save.setFixedHeight(36)
+        btn_save.clicked.connect(self.save_transaction)
+        btn_box.addWidget(btn_save)
+
+        layout.addLayout(btn_box)
 
         self._on_type_changed("Receipt")
 
@@ -481,7 +542,7 @@ class AddTransactionDialog(QDialog):
                 "notes": self.txt_notes.toPlainText().strip(),
             }
             create_transaction(data)
-            QMessageBox.information(self, "Success", "Transaction recorded!")
+            ThemedMessageBox.information(self, "Success", "Transaction recorded!")
             self.accept()
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            ThemedMessageBox.critical(self, "Error", str(e))

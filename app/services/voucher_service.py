@@ -13,6 +13,7 @@ from app.config import (
     VOUCHER_DEBIT, VOUCHER_CREDIT, VOUCHER_JOURNAL,
     VOUCHER_PREFIXES, get_financial_year
 )
+from app.services.validation_helpers import validate_model_dict, normalize_tax_rate
 
 def generate_voucher_number(session: Session, voucher_type: str, voucher_date: date) -> str:
     """
@@ -66,7 +67,7 @@ def calculate_taxes(
         qty = Decimal(str(item.get("quantity", "1.000")))
         rate = Decimal(str(item.get("unit_price", "0.00")))
         disc_pct = Decimal(str(item.get("discount_pct", "0.00")))
-        gst_pct = Decimal(str(item.get("gst_rate_pct", "0.00")))
+        gst_pct = normalize_tax_rate(item)
         
         gross = (qty * rate).quantize(Decimal("0.01"))
         discount = (gross * (disc_pct / Decimal("100.00"))).quantize(Decimal("0.01"))
@@ -105,6 +106,7 @@ def calculate_taxes(
             "igst_amount": igst_amt,
             "total_item_amount": total_item
         })
+        item_copy.pop("tax_rate", None)
         processed_items.append(item_copy)
         
     total_tax = total_cgst + total_sgst + total_igst
@@ -130,7 +132,10 @@ def create_voucher(voucher_data: Dict[str, Any], items_data: Optional[List[Dict[
         raise ValueError(f"Voucher date ({v_date}) cannot be more than 1 year in the future.")
     if v_date < date(2000, 1, 1):
         raise ValueError(f"Voucher date ({v_date}) cannot be earlier than year 2000.")
-        
+
+    from app.services.auth_service import check_period_unlocked
+    check_period_unlocked(v_date)
+
     party_id = voucher_data.get("party_id")
     if not party_id:
         raise ValueError("A valid Party must be selected for every voucher.")
@@ -153,6 +158,10 @@ def create_voucher(voucher_data: Dict[str, Any], items_data: Optional[List[Dict[
                 raise ValueError(f"Item #{idx} discount must be between 0% and 100%.")
 
     with get_session() as session:
+        try:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        except Exception:
+            pass
         party = session.query(Party).filter(Party.id == party_id).first()
         if not party:
             raise ValueError(f"Party with id {party_id} does not exist.")
@@ -207,12 +216,14 @@ def create_voucher(voucher_data: Dict[str, Any], items_data: Optional[List[Dict[
             voucher_data["credit_amount"] = cr_amt
             voucher_data["total_amount"] = max(dr_amt, cr_amt)
 
+        validate_model_dict(Voucher, voucher_data)
         voucher = Voucher(**voucher_data)
         session.add(voucher)
         session.flush()
         
         for it in processed_items:
             it["voucher_id"] = voucher.id
+            validate_model_dict(VoucherItem, it)
             item_model = VoucherItem(**it)
             session.add(item_model)
             
@@ -255,6 +266,7 @@ def update_voucher(
             session.query(VoucherItem).filter(VoucherItem.voucher_id == voucher_id).delete()
             for it in processed_items:
                 it["voucher_id"] = voucher_id
+                validate_model_dict(VoucherItem, it)
                 item_model = VoucherItem(**it)
                 session.add(item_model)
         else:
@@ -270,6 +282,7 @@ def update_voucher(
             voucher_data["debit_amount"] = Decimal("0.00")
             voucher_data["credit_amount"] = total
 
+        validate_model_dict(Voucher, voucher_data)
         for key, value in voucher_data.items():
             if hasattr(voucher, key) and key != "id":
                 setattr(voucher, key, value)
@@ -284,7 +297,12 @@ def delete_voucher(voucher_id: int) -> bool:
         voucher = session.query(Voucher).filter(Voucher.id == voucher_id).first()
         if not voucher:
             return False
+        from app.services.auth_service import check_period_unlocked
+        from app.services.audit_service import log_audit
+        check_period_unlocked(voucher.voucher_date)
+        v_num = voucher.voucher_number
         session.delete(voucher)
+        log_audit("DELETE", "vouchers", record_id=voucher_id, notes=f"Deleted voucher {v_num}")
         return True
 
 def get_voucher_by_id(voucher_id: int) -> Optional[Dict[str, Any]]:

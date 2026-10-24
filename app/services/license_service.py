@@ -9,12 +9,12 @@ import uuid
 from datetime import date, datetime, timedelta
 from typing import Dict, Any, Tuple, Optional
 
+from app.config import TRIAL_DAYS
 from app.database.connection import get_session
 from app.database.models import LicenseRecord
 
 # Master secret key known only to the vendor (used to sign license keys)
 VENDOR_SECRET = b"VYAPAR_LEDGER_MASTER_SIGNING_KEY_2024_PRO_COMMERCIAL"
-TRIAL_DAYS = 15
 
 import functools
 
@@ -141,11 +141,40 @@ def get_license_status() -> Dict[str, Any]:
                 rec.status = "EXPIRED"
                 session.commit()
                 
+        # Anti-tamper clock check: if current time is before last_verified_at, system clock was rolled back
+        now = datetime.now()
+        if rec.status == "TAMPERED":
+            return {
+                "is_licensed": False,
+                "is_trial": False,
+                "machine_id": machine_id,
+                "issued_to": None,
+                "is_perpetual": False,
+                "expiry_date": None,
+                "status_text": "Trial Invalid (System Clock Rollback Detected)",
+                "days_remaining": 0
+            }
+        if rec.last_verified_at and now < rec.last_verified_at:
+            rec.status = "TAMPERED"
+            session.commit()
+            return {
+                "is_licensed": False,
+                "is_trial": False,
+                "machine_id": machine_id,
+                "issued_to": None,
+                "is_perpetual": False,
+                "expiry_date": None,
+                "status_text": "Trial Invalid (System Clock Rollback Detected)",
+                "days_remaining": 0
+            }
+        rec.last_verified_at = now
+        session.commit()
+
         # Handle Trial Mode
         trial_start = rec.trial_start_date or today
         days_passed = (today - trial_start).days
         days_left = max(0, TRIAL_DAYS - days_passed)
-        is_trial_active = days_passed < TRIAL_DAYS
+        is_trial_active = (days_passed < TRIAL_DAYS) and (days_passed >= 0)
         
         return {
             "is_licensed": False,

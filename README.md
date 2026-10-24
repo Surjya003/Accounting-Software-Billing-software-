@@ -39,7 +39,7 @@ Traditional business software in India often forces a compromise between lightwe
 * **GST-Compliant Commercial Billing**: Automated splitting of Intra-state (CGST + SGST) vs Inter-state (IGST) taxes across all standard GST slabs (0%, 5%, 12%, 18%, 28%).
 * **Real-time Inventory Tracking**: Accurate warehouse management supporting partial purchase order receipts, sales return restorations, and low-stock triggers.
 * **Executive Document Engine**: Vector PDF creation via **ReportLab** and formatted spreadsheet creation via **openpyxl** for Chartered Accountants.
-* **Zero-Cloud Dependency & Hardware Locking**: Fully functional offline operation with encrypted local SQLite storage and tamper-proof HMAC-SHA256 hardware licensing.
+* **Zero-Cloud Dependency & Hardware Locking**: Fully functional offline operation with local SQLite storage and tamper-proof HMAC-SHA256 hardware licensing with anti-tamper clock verification.
 
 ---
 
@@ -47,7 +47,7 @@ Traditional business software in India often forces a compromise between lightwe
 
 ### 2.1 Architectural Paradigm
 
-BillFlow Suite follows a decoupled **Model-View-Service** architecture optimized for Python 3.12+ and Qt6 (PySide6):
+BillFlow Suite follows a decoupled **Model-View-Service** architecture optimized for Python 3.12 - 3.14 (tested on 3.12 and 3.14) and Qt6 (PySide6):
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -71,7 +71,7 @@ BillFlow Suite follows a decoupled **Model-View-Service** architecture optimized
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Presentation Layer (`app/ui/`)**: Built using PySide6 with an executive Bahi-Khata theme. Windows utilize asynchronous workers where appropriate to maintain high interface responsiveness.
+1. **Presentation Layer (`app/ui/`)**: Built using PySide6 with an executive Bahi-Khata theme. Views utilize asynchronous background workers (`QThreadPool` / `QRunnable`) for exports, reports, and backups to prevent UI freezing.
 2. **Business Services Layer (`app/services/`)**: Enforces validation, transactional consistency, tax mathematics, inventory state transitions, and audit generation.
 3. **Data Access Layer (`app/database/`)**: SQLAlchemy ORM with SQLite configured in Write-Ahead Logging (`WAL`) mode to prevent concurrency locks during heavy read/write operations.
 
@@ -208,7 +208,7 @@ Every party maintains a continuous, running statement of account:
 ---
 
 ### 3.5 Inventory & Stock Audit
-* **Live Stock Status**: Instant visibility into on-hand quantities and valuation (FIFO cost basis).
+* **Live Stock Status**: Instant visibility into on-hand quantities and valuation (Stock valuation: current stock × latest purchase price; see [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md)).
 * **Low Stock Alerts**: Real-time identification of items falling below minimum safety thresholds.
 * **Stock Movement Reconciliation**: Detailed audit log aggregating purchases, inward returns, outward sales, and credit returns to reconcile total inventory movement.
 
@@ -308,7 +308,7 @@ The application utilizes 20 relational entities managed through SQLAlchemy:
 
 | Layer | Component | Version | Role in Architecture |
 | :--- | :--- | :--- | :--- |
-| **Language** | Python | 3.10+ / 3.12+ | Core runtime with native `Decimal` financial precision |
+| **Language** | Python | 3.12 - 3.14 | Core runtime with native `Decimal` financial precision (tested on 3.12 and 3.14) |
 | **UI Framework** | PySide6 | 6.5+ | Modern Qt6 GUI with executive dark/light themes |
 | **ORM / Database**| SQLAlchemy & SQLite | 2.0+ / 3.x | Local SQL engine configured in Write-Ahead Logging (`WAL`) mode |
 | **PDF Engine** | ReportLab | 4.0+ | Vector A4 printing of tax invoices, quotations, and statements |
@@ -321,7 +321,7 @@ The application utilizes 20 relational entities managed through SQLAlchemy:
 ## 7. Installation, Setup & Quick Start
 
 ### 7.1 Prerequisites
-* Python 3.10, 3.11, 3.12, or 3.14.
+* Python 3.12 - 3.14 (tested on 3.12 and 3.14).
 * Git (optional).
 * Windows 10/11, macOS, or Linux.
 
@@ -372,29 +372,64 @@ Designed for high-speed counter billing and keyboard-only operation:
 
 ---
 
-## 9. Automated Testing & Quality Assurance
+## 9. Automated Testing & Production Quality Assurance
 
-The codebase includes full automated test coverage across all layers:
+The codebase includes exhaustive automated test coverage across all layers with **100% pass rates**:
 
-### Running the Pytest Suite
+### Running the Master Production Release Gate
+Executes the consolidated 8-gate CI verification pipeline:
 ```bash
-pytest tests/
+python scripts/release_check.py
 ```
-**Expected Output**:
-```
-============================= 46 passed in 2.88s ==============================
+**Gates Validated:**
+1. **Dependency Vulnerability Audit:** `pip-audit -r requirements.txt` (0 known vulnerabilities)
+2. **Core QA Audit Suite:** `tests/test_full_qa_suite.py` (38/38 end-to-end commercial tests)
+3. **Deep Coverage Audit Suite:** `tests/test_deep_coverage_audit.py` (16 hand-verified scenarios)
+4. **Phase 3 Data Safety Suite:** `tests/test_phase3_data_safety.py` (Migrations, rolling backups, ClockGuard, single-instance)
+5. **Phase 4 Security & RBAC Suite:** `tests/test_phase4_security_rbac.py` (Roles, scrypt hashing, brute-force lockout, period locking, audit log)
+6. **Performance & Stress Benchmarks:** `tests/test_performance_stress.py` (32,000-record database: all queries < 45ms, PDF & Excel < 200ms)
+7. **Books Mathematical Integrity:** `scripts/verify_books.py` (7 checks: quick_check, foreign keys, tax math, sequence continuity, Trial Balance equality)
+8. **Database WAL & Health Verification:** `check_database_health()`
+
+### Running Individual Test Suites
+```bash
+# Deep-coverage audit scenarios
+pytest tests/test_deep_coverage_audit.py -v
+
+# 32k-record performance stress benchmarks
+pytest tests/test_performance_stress.py -v -s
+
+# Independent books verification
+python scripts/verify_books.py data/test_accounting.db
 ```
 
-### Running the QA Audit Suite
-Executes the full 38-step commercial supply chain audit:
+---
+
+## 10. Packaging & Windows Installer Build
+
+### Standalone Executable Build (PyInstaller)
 ```bash
-python tests/test_full_qa_suite.py
+pyinstaller build_exe.spec --clean -y
 ```
-**Coverage Verification**:
-* Master party creation and boundary validations (rejecting duplicate names, invalid GSTIN, invalid phones).
-* Product creation across all GST slabs (0%, 5%, 12%, 18%, 28%) and negative price blocks.
-* Purchase order partial-to-full goods receipt cycles.
-* Tax invoice generation, decimal quantity precision (e.g. 3.750 KG), and automatic ledger debit vouchers.
-* Quotation creation and non-account-impacting checks.
-* Sales returns quantity boundary blocks and credit note ledger posting.
-* Full arithmetic equality of the Trial Balance and reconciliation of Profit & Loss statements.
+Generates standalone windowed application bundle in `dist/BillFlow/`.
+
+### Windows Setup Installer (Inno Setup 6)
+```bash
+iscc installer.iss
+```
+Generates `dist_installer/BillFlow_Setup_v1.0.0.exe` targeting `Program Files\BillFlow` with persistent financial database protection in `%APPDATA%\BillFlow`.
+
+---
+
+## 11. Production Documentation Library
+
+Comprehensive reference documentation is available in the [`docs/`](docs/) directory:
+
+- 📖 [**User Guide**](docs/USER_GUIDE.md): End-user operations, keyboard shortcuts, billing workflows, and daybook accounting.
+- ⚙️ [**Administrator Guide**](docs/ADMIN_GUIDE.md): Technical deployment, directory topology, RBAC, period locking, and disaster recovery.
+- ⚖️ [**Statutory GST Compliance**](docs/COMPLIANCE.md): E-invoicing thresholds, E-way bill rules, CGST Rule 46 16-point checklist, and CA pre-audit sign-off questionnaire.
+- 🔍 [**Known Limitations & Architecture**](docs/KNOWN_LIMITATIONS.md): Operational boundaries, SQLite WAL concurrency, and multi-user topology.
+- 📋 [**Release Checklist**](docs/RELEASE_CHECKLIST.md): Step-by-step pre-flight verification gates before deployment.
+- 🚨 [**Rollback Plan**](docs/ROLLBACK_PLAN.md): Emergency disaster recovery and database snapshot restoration procedures.
+- 📜 [**Changelog**](docs/CHANGELOG.md): Complete chronological record of fixes and enhancements for v1.0.0.
+

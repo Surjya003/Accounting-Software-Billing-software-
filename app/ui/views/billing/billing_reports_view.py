@@ -2,15 +2,17 @@
 Billing Reports View — Overview of billing-related KPIs and statistics.
 """
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QGridLayout
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout, QPushButton
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QColor
 
 from app.services.billing import (
     invoice_service, product_service, proforma_service,
     purchase_order_service, challan_service, return_service
 )
+from app.ui.theme import theme_manager
+from app.ui.theme.widgets import PageHeaderWidget
+from app.ui.widgets.stat_card import StatCard
 
 
 class BillingReportsView(QWidget):
@@ -22,37 +24,40 @@ class BillingReportsView(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(20)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(16)
 
         # Header
-        tb = QVBoxLayout(); tb.setSpacing(4)
-        lbl = QLabel("Billing Reports")
-        lbl.setStyleSheet("font-size: 20px; font-weight: 600; color: #1B1B18;")
-        tb.addWidget(lbl)
-        ls = QLabel("Overview of billing metrics, document counts, and inventory status")
-        ls.setStyleSheet("font-size: 12px; color: #6B6558;")
-        tb.addWidget(ls)
-        layout.addLayout(tb)
+        self.header_widget = PageHeaderWidget(
+            title="Billing Reports",
+            subtitle="Overview of billing metrics, document counts, and inventory status"
+        )
+        btn_refresh = QPushButton("Refresh")
+        btn_refresh.setIcon(theme_manager.get_icon("refresh", size=16))
+        btn_refresh.setProperty("variant", "secondary")
+        btn_refresh.setFixedHeight(36)
+        btn_refresh.clicked.connect(self.refresh_data)
+        self.header_widget.add_custom_action(btn_refresh)
+        layout.addWidget(self.header_widget)
 
-        # KPI Cards
+        # KPI Cards Grid
         grid = QGridLayout()
         grid.setSpacing(16)
 
-        self.card_today = self._card("Today's Sales", "₹0", "#2C3E63")
-        self.card_month = self._card("Monthly Revenue", "₹0", "#2F6844")
-        self.card_stock = self._card("Low Stock Items", "0", "#8B2635")
-        self.card_returns = self._card("Pending Returns", "0", "#A6822E")
+        self.card_today = StatCard("TODAY'S SALES", "₹0", "Cash & credit billed", token_name="accent")
+        self.card_month = StatCard("MONTHLY REVENUE", "₹0", "Current month sales", token_name="success")
+        self.card_stock = StatCard("LOW STOCK ITEMS", "0", "Below reorder level", token_name="danger")
+        self.card_returns = StatCard("PENDING RETURNS", "0", "Awaiting approval", token_name="warning")
 
         grid.addWidget(self.card_today, 0, 0)
         grid.addWidget(self.card_month, 0, 1)
         grid.addWidget(self.card_stock, 0, 2)
         grid.addWidget(self.card_returns, 0, 3)
 
-        self.card_invoices = self._card("Total Invoices", "0", "#2C3E63")
-        self.card_proformas = self._card("Proformas", "0", "#7D5A8F")
-        self.card_pos = self._card("Purchase Orders", "0", "#A6822E")
-        self.card_challans = self._card("Delivery Challans", "0", "#3F7A56")
+        self.card_invoices = StatCard("TOTAL INVOICES", "0", "Cumulative invoices", token_name="info")
+        self.card_proformas = StatCard("PROFORMAS", "0", "Quotations & estimates", token_name="accent")
+        self.card_pos = StatCard("PURCHASE ORDERS", "0", "Issued to vendors", token_name="warning")
+        self.card_challans = StatCard("DELIVERY CHALLANS", "0", "Goods in dispatch", token_name="success")
 
         grid.addWidget(self.card_invoices, 1, 0)
         grid.addWidget(self.card_proformas, 1, 1)
@@ -64,41 +69,15 @@ class BillingReportsView(QWidget):
 
         self.refresh_data()
 
-    def _card(self, title, value, color):
-        card = QFrame()
-        card.setObjectName("Card")
-        card.setStyleSheet(f"""
-            #Card {{
-                border-left: 5px solid {color};
-                min-height: 90px;
-            }}
-        """)
-        cl = QVBoxLayout(card); cl.setContentsMargins(16, 14, 16, 14); cl.setSpacing(6)
-
-        lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("font-size: 12px; font-weight: 600; color: #6B6558; text-transform: uppercase;")
-        cl.addWidget(lbl_title)
-
-        lbl_value = QLabel(value)
-        lbl_value.setObjectName("kpi_value")
-        lbl_value.setStyleSheet(f"font-size: 26px; font-weight: bold; color: {color}; font-family: Consolas;")
-        cl.addWidget(lbl_value)
-
-        return card
-
-    def _set_card_value(self, card, value):
-        lbl = card.findChild(QLabel, "kpi_value")
-        if lbl: lbl.setText(value)
-
     def refresh_data(self):
         try:
-            self._set_card_value(self.card_today, f"₹{invoice_service.get_today_sales_total():,.0f}")
-            self._set_card_value(self.card_month, f"₹{invoice_service.get_month_sales_total():,.0f}")
-            self._set_card_value(self.card_stock, str(product_service.get_low_stock_count()))
-            self._set_card_value(self.card_returns, str(return_service.get_pending_returns_count()))
-            self._set_card_value(self.card_invoices, f"{invoice_service.get_invoice_count():,}")
-            self._set_card_value(self.card_proformas, f"{proforma_service.get_proforma_count():,}")
-            self._set_card_value(self.card_pos, f"{purchase_order_service.get_po_count():,}")
-            self._set_card_value(self.card_challans, f"{challan_service.get_challan_count():,}")
+            self.card_today.set_value(f"₹{invoice_service.get_today_sales_total():,.0f}")
+            self.card_month.set_value(f"₹{invoice_service.get_month_sales_total():,.0f}")
+            self.card_stock.set_value(str(product_service.get_low_stock_count()))
+            self.card_returns.set_value(str(return_service.get_pending_returns_count()))
+            self.card_invoices.set_value(f"{invoice_service.get_invoice_count():,}")
+            self.card_proformas.set_value(f"{proforma_service.get_proforma_count():,}")
+            self.card_pos.set_value(f"{purchase_order_service.get_po_count():,}")
+            self.card_challans.set_value(f"{challan_service.get_challan_count():,}")
         except Exception as e:
             print(f"Billing Reports Error: {e}")

@@ -123,6 +123,13 @@ def get_stock_movement_report(
         )
         pr_map = {r.product_id: float(r.qty or 0) for r in pr_rows}
 
+        from app.services.inventory_valuation import calculate_inventory_valuation
+        val_res = calculate_inventory_valuation(
+            session, start_date=start_date, end_date=end_date,
+            product_ids=[prod.id for prod in products] if product_id else None
+        )
+        val_map = val_res["products"]
+
         for prod in products:
             qty_sold, sales_revenue, sales_taxable = sold_map.get(prod.id, (0.0, 0.0, 0.0))
             qty_purchased, purchase_cost = purchased_map.get(prod.id, (0.0, 0.0))
@@ -133,12 +140,14 @@ def get_stock_movement_report(
             net_qty_sold = qty_sold - qty_sales_returned
             net_qty_purchased = qty_purchased - qty_purchase_returned
 
-            # Profit calculation (selling price - purchase price) * qty sold
-            purchase_price = float(prod.purchase_price or 0)
-            selling_price = float(prod.price or 0)
-            estimated_cogs = purchase_price * net_qty_sold if purchase_price > 0 else 0.0
-            profit = sales_taxable - estimated_cogs if estimated_cogs > 0 else (sales_taxable - (purchase_cost * (net_qty_sold / qty_purchased if qty_purchased > 0 else 0)))
+            # Profit & valuation using unified inventory valuation engine (WAC)
+            val_info = val_map.get(prod.id, {})
+            unit_cost = float(val_info.get("unit_cost", float(prod.purchase_price or 0)))
+            stock_val = float(val_info.get("closing_value", round(float(prod.stock_quantity or 0) * unit_cost, 2)))
+            estimated_cogs = float(val_info.get("cogs", round(unit_cost * net_qty_sold, 2)))
+            profit = sales_taxable - estimated_cogs
             margin_pct = (profit / sales_taxable * 100) if sales_taxable > 0 else 0.0
+            selling_price = float(prod.price or 0)
 
             item_data = {
                 "id": prod.id,
@@ -148,7 +157,8 @@ def get_stock_movement_report(
                 "unit": prod.unit,
                 "current_stock": float(prod.stock_quantity or 0),
                 "selling_price": selling_price,
-                "purchase_price": purchase_price,
+                "purchase_price": unit_cost,
+                "valuation_cost": unit_cost,
                 "qty_purchased": net_qty_purchased,
                 "qty_sold": net_qty_sold,
                 "qty_sales_returned": qty_sales_returned,
@@ -157,7 +167,7 @@ def get_stock_movement_report(
                 "purchase_cost": purchase_cost,
                 "profit": round(profit, 2),
                 "margin_pct": round(margin_pct, 1),
-                "stock_value": round(float(prod.stock_quantity or 0) * purchase_price, 2),
+                "stock_value": stock_val,
                 "low_stock_threshold": float(prod.low_stock_threshold or 10),
             }
             items.append(item_data)
@@ -190,5 +200,6 @@ def get_stock_movement_report(
             "most_profitable": most_profitable,
             "low_stock_count": len(low_stock),
             "total_products": len(items),
-            "total_stock_value": round(sum(i["stock_value"] for i in items), 2),
+            "valuation_method": val_res["method_display"],
+            "total_stock_value": round(float(val_res["total_closing_stock_value"]), 2) if not product_id else round(sum(i["stock_value"] for i in items), 2),
         }

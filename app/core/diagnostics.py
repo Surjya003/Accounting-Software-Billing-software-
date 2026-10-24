@@ -134,3 +134,94 @@ def dump_thread_stacks() -> str:
 
     logger.info("Thread dump saved to %s", dump_file)
     return dump_text
+
+
+def export_diagnostics_bundle(output_path: str = None) -> str:
+    """
+    Creates a comprehensive, sanitized diagnostics zip archive containing:
+    1. system_health.json (health check + latency + memory)
+    2. environment.json (OS platform, Python, architecture, active threads)
+    3. configuration.json (sanitized config, paths, license metadata)
+    4. db_health.json (integrity check, foreign key check, table stats)
+    5. Recent log tails (billflow.log, crash.log, thread_dump.log)
+    """
+    import zipfile
+    import json
+    import platform
+    from pathlib import Path
+    from app.config import (
+        APP_NAME, APP_VERSION, EXPORTS_DIR, DB_PATH, BACKUP_DIR, TRIAL_DAYS
+    )
+    from app.services.license_service import get_license_status
+
+    if not output_path:
+        os.makedirs(EXPORTS_DIR, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = str(EXPORTS_DIR / f"BillFlow_Diagnostics_{ts}.zip")
+
+    # 1. System Health Report
+    health_data = run_system_health_check()
+
+    # 2. Environment Info
+    env_info = {
+        "app_name": APP_NAME,
+        "app_version": APP_VERSION,
+        "platform": platform.platform(),
+        "system": platform.system(),
+        "release": platform.release(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "python_version": platform.python_version(),
+        "python_compiler": platform.python_compiler(),
+        "process_id": os.getpid(),
+        "memory_rss_mb": get_memory_usage_mb(),
+        "active_threads_count": len(sys._current_frames()),
+    }
+
+    # 3. Sanitized Config
+    lic = get_license_status()
+    config_info = {
+        "app_name": APP_NAME,
+        "app_version": APP_VERSION,
+        "trial_days": TRIAL_DAYS,
+        "db_path_exists": Path(DB_PATH).exists(),
+        "db_size_bytes": Path(DB_PATH).stat().st_size if Path(DB_PATH).exists() else 0,
+        "backup_dir_exists": Path(BACKUP_DIR).exists(),
+        "exports_dir_exists": Path(EXPORTS_DIR).exists(),
+        "license_status": {
+            "status_text": lic.get("status_text"),
+            "is_licensed": lic.get("is_licensed"),
+            "is_trial": lic.get("is_trial"),
+            "machine_id": lic.get("machine_id"),
+        }
+    }
+
+    # 4. Database Health & Table Counts
+    db_health = {"status": "UNKNOWN"}
+    try:
+        from app.database.migrations import check_database_health
+        db_health = check_database_health(DB_PATH)
+    except Exception as e:
+        db_health["error"] = str(e)
+
+    # 5. Build ZIP
+    with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("system_health.json", json.dumps(health_data, indent=2))
+        zf.writestr("environment.json", json.dumps(env_info, indent=2))
+        zf.writestr("configuration.json", json.dumps(config_info, indent=2))
+        zf.writestr("database_health.json", json.dumps(db_health, indent=2))
+
+        # Include recent log tails
+        for log_name in ["billflow.log", "app.log", "crash.log", "thread_dump.log"]:
+            log_p = LOG_DIR / log_name
+            if log_p.exists():
+                try:
+                    with open(log_p, "r", encoding="utf-8", errors="replace") as f:
+                        lines = f.readlines()
+                        tail_lines = lines[-500:] if len(lines) > 500 else lines
+                        zf.writestr(f"logs/{log_name}", "".join(tail_lines))
+                except Exception as log_err:
+                    zf.writestr(f"logs/{log_name}.error", str(log_err))
+
+    logger.info("Exported diagnostics bundle to %s", output_path)
+    return output_path

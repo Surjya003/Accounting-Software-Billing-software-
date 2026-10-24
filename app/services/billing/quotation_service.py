@@ -50,7 +50,8 @@ def calculate_quotation_totals(items_data: List[Dict[str, Any]], company_sc: str
         qty = Decimal(str(it.get("quantity", "1") or "1"))
         price = Decimal(str(it.get("unit_price", "0") or "0"))
         disc = Decimal(str(it.get("discount_pct", "0") or "0"))
-        tax_pct = Decimal(str(it.get("gst_rate_pct", "0") or "0"))
+        from app.services.validation_helpers import normalize_tax_rate
+        tax_pct = normalize_tax_rate(it)
 
         r = GSTEngine.calculate_line_item(qty, price, disc, tax_pct, t_type)
         it_copy = dict(it)
@@ -78,6 +79,10 @@ def create_quotation(data: Dict[str, Any], items_data: List[Dict[str, Any]]) -> 
         raise ValueError("Quotation must have at least one item.")
 
     with get_session() as session:
+        try:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        except Exception:
+            pass
         party = session.query(Party).filter(Party.id == data.get("party_id")).first()
         if not party:
             raise ValueError("Party not found.")
@@ -111,7 +116,7 @@ def create_quotation(data: Dict[str, Any], items_data: List[Dict[str, Any]]) -> 
             is_interstate=is_inter,
             shipping_address=data.get("shipping_address"),
             transporter_name=data.get("transporter_name"),
-            vehicle_no=data.get("vehicle_no"),
+            vehicle_no=str(data["vehicle_no"]).strip().upper() if data.get("vehicle_no") else None,
             lr_no=data.get("lr_no"),
             lr_date=data.get("lr_date"),
             eway_bill_no=data.get("eway_bill_no"),
@@ -119,9 +124,22 @@ def create_quotation(data: Dict[str, Any], items_data: List[Dict[str, Any]]) -> 
             terms_and_conditions=data.get("terms_and_conditions"),
             bank_name=data.get("bank_name"),
             bank_ac_no=data.get("bank_ac_no"),
-            bank_ifsc=data.get("bank_ifsc"),
+            bank_ifsc=str(data["bank_ifsc"]).strip().upper() if data.get("bank_ifsc") else None,
             po_number=data.get("po_number"),
             reference_number=data.get("reference_number"),
+            kind_attn=data.get("kind_attn"),
+            enquiry_ref_date=data.get("enquiry_ref_date"),
+            subject=data.get("subject"),
+            price_basis=data.get("price_basis"),
+            terms_payment=data.get("terms_payment"),
+            terms_delivery=data.get("terms_delivery"),
+            terms_validity=data.get("terms_validity"),
+            terms_freight=data.get("terms_freight"),
+            terms_packing=data.get("terms_packing"),
+            terms_warranty=data.get("terms_warranty"),
+            terms_taxes=data.get("terms_taxes"),
+            terms_inspection=data.get("terms_inspection"),
+            terms_jurisdiction=data.get("terms_jurisdiction"),
         )
         session.add(quotation)
         session.flush()
@@ -242,10 +260,17 @@ def update_quotation(q_id: int, q_data: Dict[str, Any], items_data: List[Dict[st
             "party_id", "quotation_date", "valid_until", "status", "notes",
             "shipping_address", "transporter_name", "vehicle_no", "lr_no",
             "lr_date", "eway_bill_no", "destination", "terms_and_conditions",
-            "bank_name", "bank_ac_no", "bank_ifsc", "po_number", "reference_number"
+            "bank_name", "bank_ac_no", "bank_ifsc", "po_number", "reference_number",
+            "kind_attn", "enquiry_ref_date", "subject", "price_basis",
+            "terms_payment", "terms_delivery", "terms_validity", "terms_freight",
+            "terms_packing", "terms_warranty", "terms_taxes", "terms_inspection",
+            "terms_jurisdiction",
         ):
             if key in q_data:
-                setattr(quote, key, q_data[key])
+                val = q_data[key]
+                if key in ("vehicle_no", "bank_ifsc") and val:
+                    val = str(val).strip().upper()
+                setattr(quote, key, val)
 
         session.flush()
         session.refresh(quote)
@@ -294,9 +319,25 @@ def get_quotation_kpis() -> Dict[str, Any]:
 def convert_to_invoice(q_id: int) -> Optional[Invoice]:
     """Convert a quotation into an official Tax Invoice and deduct stock."""
     with get_session() as session:
+        try:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        except Exception:
+            pass
         quote = session.query(Quotation).filter(Quotation.id == q_id).first()
         if not quote:
             return None
+        if quote.status == "converted":
+            raise ValueError(f"Quotation #{quote.quotation_number} has already been converted.")
+        if quote.status in ("cancelled", "rejected"):
+            raise ValueError(f"Cannot convert {quote.status} quotation #{quote.quotation_number}.")
+
+        # Atomic check-and-set to block concurrent double-conversion
+        rowcount = session.query(Quotation).filter(
+            Quotation.id == q_id,
+            Quotation.status.notin_(["converted", "cancelled", "rejected"])
+        ).update({"status": "converted"}, synchronize_session=False)
+        if rowcount == 0:
+            raise ValueError(f"Quotation #{quote.quotation_number} has already been converted.")
 
         q_items = session.query(QuotationItem).filter(QuotationItem.quotation_id == q_id).all()
         if not q_items:
@@ -306,6 +347,7 @@ def convert_to_invoice(q_id: int) -> Optional[Invoice]:
         company = session.query(CompanyProfile).first()
         c_sc = company.state_code if company and company.state_code else "27"
         p_sc = party.state_code if party and party.state_code else c_sc
+        allow_neg = getattr(company, "allow_negative_stock", False) if company else False
 
         from app.services.billing.invoice_service import generate_invoice_number, calculate_invoice_totals
         inv_date = date.today()
@@ -354,6 +396,11 @@ def convert_to_invoice(q_id: int) -> Optional[Invoice]:
             bank_ifsc=quote.bank_ifsc,
             po_number=quote.po_number,
             pi_number=quote.quotation_number,  # Link back to quotation number
+            reference_no_date=f"{quote.quotation_number} dt {quote.quotation_date.strftime('%d-%m-%Y') if hasattr(quote.quotation_date, 'strftime') else str(quote.quotation_date)}",
+            other_references=f"Quotation #{quote.quotation_number}",
+            buyers_order_no=quote.po_number or "",
+            mode_terms_of_payment=getattr(quote, "terms_payment", "") or "",
+            terms_of_delivery=getattr(quote, "terms_delivery", "") or "",
         )
         session.add(invoice)
         session.flush()
@@ -380,8 +427,12 @@ def convert_to_invoice(q_id: int) -> Optional[Invoice]:
             if it.get("product_id"):
                 product = session.query(Product).filter(Product.id == it["product_id"]).first()
                 if product:
-                    qty = float(it.get("quantity", 0))
-                    product.stock_quantity = max(Decimal("0"), product.stock_quantity - Decimal(str(qty)))
+                    qty = Decimal(str(it.get("quantity", "0")))
+                    if not allow_neg and qty > product.stock_quantity:
+                        raise ValueError(
+                            f"Insufficient stock for product '{product.name}'. Available: {product.stock_quantity}, Requested: {qty}."
+                        )
+                    product.stock_quantity -= qty
 
         # Post to General Ledger (Voucher)
         from app.services.billing.invoice_service import post_sales_voucher
@@ -392,10 +443,86 @@ def convert_to_invoice(q_id: int) -> Optional[Invoice]:
             narration=f"Tax Invoice #{invoice.invoice_number} (From Quote #{quote.quotation_number})"
         )
 
-        # Mark quotation as converted
-        quote.status = "converted"
-
         session.flush()
         session.refresh(invoice)
         return invoice
+
+
+def convert_to_proforma(q_id: int):
+    """Convert a quotation into a proforma invoice."""
+    with get_session() as session:
+        try:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        except Exception:
+            pass
+        quote = session.query(Quotation).filter(Quotation.id == q_id).first()
+        if not quote:
+            return None
+        if quote.status == "converted":
+            raise ValueError(f"Quotation #{quote.quotation_number} has already been converted.")
+        if quote.status in ("cancelled", "rejected"):
+            raise ValueError(f"Cannot convert {quote.status} quotation #{quote.quotation_number}.")
+
+        quote.status = "converted"
+
+        from app.database.models import ProformaInvoice, ProformaItem
+        from app.services.billing.proforma_service import generate_proforma_number
+        pf_date = date.today()
+        pf_num = generate_proforma_number(session, pf_date)
+
+        pf = ProformaInvoice(
+            proforma_number=pf_num,
+            proforma_date=pf_date,
+            party_id=quote.party_id,
+            subtotal=quote.subtotal,
+            cgst_total=quote.cgst_total,
+            sgst_total=quote.sgst_total,
+            igst_total=quote.igst_total,
+            tax_amount=quote.tax_amount,
+            total_amount=quote.total_amount,
+            status="draft",
+            notes=quote.notes,
+            is_interstate=quote.is_interstate,
+            shipping_address=quote.shipping_address,
+            transporter_name=quote.transporter_name,
+            vehicle_no=quote.vehicle_no,
+            lr_no=quote.lr_no,
+            lr_date=quote.lr_date,
+            eway_bill_no=quote.eway_bill_no,
+            destination=quote.destination,
+            terms_and_conditions=quote.terms_and_conditions,
+            bank_name=quote.bank_name,
+            bank_ac_no=quote.bank_ac_no,
+            bank_ifsc=quote.bank_ifsc,
+            po_number=quote.po_number,
+            valid_until=quote.valid_until,
+            payment_terms=getattr(quote, "terms_payment", ""),
+            delivery_period=getattr(quote, "terms_delivery", ""),
+            customer_po_no=quote.po_number,
+            linked_invoice_reference="",
+        )
+        session.add(pf)
+        session.flush()
+
+        for it in quote.items:
+            session.add(ProformaItem(
+                proforma_id=pf.id,
+                product_id=it.product_id,
+                item_description=it.item_description,
+                hsn_code=it.hsn_code,
+                quantity=it.quantity,
+                unit=it.unit,
+                unit_price=it.unit_price,
+                discount_pct=it.discount_pct,
+                taxable_value=it.taxable_value,
+                gst_rate_pct=it.gst_rate_pct,
+                cgst_amount=it.cgst_amount,
+                sgst_amount=it.sgst_amount,
+                igst_amount=it.igst_amount,
+                total_amount=it.total_amount,
+            ))
+
+        session.flush()
+        session.refresh(pf)
+        return pf
 

@@ -5,16 +5,22 @@ from datetime import date, datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QDateEdit, QComboBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QFrame, QMessageBox
+    QFrame
 )
 from PySide6.QtCore import Qt, QDate, Signal
 from PySide6.QtGui import QColor, QFont
+import os
 
 from app.services.report_service import get_day_book
 from app.services.export_service import export_daybook_excel, export_invoice_pdf
 from app.services.voucher_service import get_voucher_by_id
 from app.config import VOUCHER_TYPES
-import os
+from app.ui.theme import theme_manager
+from app.ui.theme.widgets import (
+    PageHeaderWidget, CardFrame, ThemedMessageBox
+)
+from app.ui.async_worker import run_in_background
+
 
 class DayBookView(QWidget):
     navigate_to = Signal(str, dict)
@@ -23,65 +29,79 @@ class DayBookView(QWidget):
         super().__init__(parent)
         self.current_data = None
         self.init_ui()
-        
+
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(14)
-        
+
+        # 0. Page Header
+        self.header_widget = PageHeaderWidget(
+            title="Day Book",
+            subtitle="Chronological transaction journal and daily ledger"
+        )
+        self.btn_excel = QPushButton("Export Excel")
+        self.btn_excel.setIcon(theme_manager.get_icon("download", size=16))
+        self.btn_excel.setProperty("variant", "secondary")
+        self.btn_excel.setFixedHeight(36)
+        self.btn_excel.clicked.connect(self.export_excel)
+        self.header_widget.add_custom_action(self.btn_excel)
+        layout.addWidget(self.header_widget)
+
         # 1. Filter Bar
-        f_card = QFrame()
-        f_card.setObjectName("Card")
+        f_card = CardFrame()
         f_layout = QHBoxLayout(f_card)
         f_layout.setContentsMargins(12, 8, 12, 8)
         f_layout.setSpacing(10)
-        
-        lbl_from = QLabel("<b>From Date:</b>")
+
+        lbl_from = QLabel("From Date:")
+        lbl_from.setFont(theme_manager.get_font("label", bold=True))
         f_layout.addWidget(lbl_from)
         self.dt_from = QDateEdit()
         self.dt_from.setCalendarPopup(True)
         self.dt_from.setDate(QDate(date.today().year, date.today().month, 1))
         self.dt_from.setDisplayFormat("dd-MM-yyyy")
         f_layout.addWidget(self.dt_from)
-        
-        lbl_to = QLabel("<b>To Date:</b>")
+
+        lbl_to = QLabel("To Date:")
+        lbl_to.setFont(theme_manager.get_font("label", bold=True))
         f_layout.addWidget(lbl_to)
         self.dt_to = QDateEdit()
         self.dt_to.setCalendarPopup(True)
         self.dt_to.setDate(QDate.currentDate())
         self.dt_to.setDisplayFormat("dd-MM-yyyy")
         f_layout.addWidget(self.dt_to)
-        
-        lbl_type = QLabel("<b>Voucher Type:</b>")
+
+        from app.ui.widgets.quick_date_selector import QuickDateSelector
+        self.quick_dates = QuickDateSelector(self.dt_from, self.dt_to, on_change=self.load_data)
+        f_layout.addWidget(self.quick_dates)
+
+        lbl_type = QLabel("Voucher Type:")
+        lbl_type.setFont(theme_manager.get_font("label", bold=True))
         f_layout.addWidget(lbl_type)
         self.combo_type = QComboBox()
         self.combo_type.addItems(["All"] + VOUCHER_TYPES)
         f_layout.addWidget(self.combo_type)
-        
-        btn_filter = QPushButton("🔍 Filter")
-        btn_filter.setObjectName("PrimaryBtn")
+
+        btn_filter = QPushButton("Filter")
+        btn_filter.setIcon(theme_manager.get_icon("refresh", size=16))
+        btn_filter.setProperty("variant", "secondary")
         btn_filter.clicked.connect(self.load_data)
         f_layout.addWidget(btn_filter)
-        
+
         f_layout.addStretch()
-        
-        btn_excel = QPushButton("📊 Export Excel")
-        btn_excel.clicked.connect(self.export_excel)
-        f_layout.addWidget(btn_excel)
-        
         layout.addWidget(f_card)
-        
+
         # 2. Summary Ribbon
-        self.ribbon = QFrame()
-        self.ribbon.setObjectName("Card")
+        self.ribbon = CardFrame()
         r_layout = QHBoxLayout(self.ribbon)
         r_layout.setContentsMargins(12, 8, 12, 8)
-        
+
         self.lbl_summary = QLabel("Loading summary...")
-        self.lbl_summary.setStyleSheet("font-size: 13px; color: #1E293B;")
+        self.lbl_summary.setFont(theme_manager.get_font("body"))
         r_layout.addWidget(self.lbl_summary)
         layout.addWidget(self.ribbon)
-        
+
         # 3. Day Book Table
         self.table = QTableWidget()
         self.table.setColumnCount(9)
@@ -98,12 +118,13 @@ class DayBookView(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)
-        
-        self.table.setAlternatingRowColors(True)
+
+        self.table.verticalHeader().setDefaultSectionSize(36)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         layout.addWidget(self.table, 1)
-        
+
         self.load_data()
 
     def load_data(self):
@@ -112,43 +133,39 @@ class DayBookView(QWidget):
         from_d = date(q_f.year(), q_f.month(), q_f.day())
         to_d = date(q_t.year(), q_t.month(), q_t.day())
         vtype = self.combo_type.currentText()
-        
+
         data = get_day_book(from_d, to_d, voucher_type=vtype)
         self.current_data = data
-        
+
         self.lbl_summary.setText(
-            f"<b>Transactions:</b> {data['count']} | "
-            f"<b>Total Debits:</b> ₹{data['total_debit']:,.2f} | "
-            f"<b>Total Credits:</b> ₹{data['total_credit']:,.2f} | "
-            f"<b>Debit Txns:</b> ₹{data['total_debits_amt']:,.2f} | "
-            f"<b>Credit Txns:</b> ₹{data['total_credits_amt']:,.2f}"
+            f"Transactions: {data['count']}  |  "
+            f"Total Debits: ₹{data['total_debit']:,.2f}  |  "
+            f"Total Credits: ₹{data['total_credit']:,.2f}  |  "
+            f"Debit Txns: ₹{data['total_debits_amt']:,.2f}  |  "
+            f"Credit Txns: ₹{data['total_credits_amt']:,.2f}"
         )
-        
+
         rows = data["rows"]
         self.table.setUpdatesEnabled(False)
         try:
             self.table.setRowCount(len(rows))
-            font_bold = QFont()
-            font_bold.setBold(True)
-            
             for r_idx, r in enumerate(rows):
                 d_str = r["voucher_date"].strftime("%d-%m-%Y") if hasattr(r["voucher_date"], "strftime") else str(r["voucher_date"])
-                
+
                 it_d = QTableWidgetItem(d_str)
                 it_t = QTableWidgetItem(r["voucher_type"])
                 it_v = QTableWidgetItem(r["voucher_number"])
                 it_v.setData(Qt.UserRole, r["id"])
                 it_p = QTableWidgetItem(r["party_name"])
-                it_p.setFont(font_bold)
-                it_ref = QTableWidgetItem(r["reference_no"] or "-")
-                it_m = QTableWidgetItem(r["payment_mode"] or "-")
-                
-                it_dr = QTableWidgetItem(f"₹{r['debit']:,.2f}" if r['debit'] > 0 else "-")
+                it_ref = QTableWidgetItem(r["reference_no"] or "—")
+                it_m = QTableWidgetItem(r["payment_mode"] or "—")
+
+                it_dr = QTableWidgetItem(f"₹{r['debit']:,.2f}" if r['debit'] > 0 else "—")
                 it_dr.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                
-                it_cr = QTableWidgetItem(f"₹{r['credit']:,.2f}" if r['credit'] > 0 else "-")
+
+                it_cr = QTableWidgetItem(f"₹{r['credit']:,.2f}" if r['credit'] > 0 else "—")
                 it_cr.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                
+
                 self.table.setItem(r_idx, 0, it_d)
                 self.table.setItem(r_idx, 1, it_t)
                 self.table.setItem(r_idx, 2, it_v)
@@ -157,31 +174,58 @@ class DayBookView(QWidget):
                 self.table.setItem(r_idx, 5, it_m)
                 self.table.setItem(r_idx, 6, it_dr)
                 self.table.setItem(r_idx, 7, it_cr)
-                
-                # Print PDF button if invoice
-                btn_print = QPushButton("🖨️ PDF")
-                btn_print.setStyleSheet("padding: 2px 6px; font-size: 11px;")
+
+                btn_print = QPushButton("PDF")
+                btn_print.setIcon(theme_manager.get_icon("printer", size=14))
+                btn_print.setProperty("variant", "ghost")
+                btn_print.setFixedHeight(28)
                 btn_print.clicked.connect(lambda _, vid=r["id"]: self.print_voucher_pdf(vid))
                 self.table.setCellWidget(r_idx, 8, btn_print)
         finally:
             self.table.setUpdatesEnabled(True)
 
     def print_voucher_pdf(self, vid):
-        v = get_voucher_by_id(vid)
-        if v:
+        def _worker(v_id):
+            v = get_voucher_by_id(v_id)
+            if not v:
+                raise ValueError(f"Voucher {v_id} not found")
+            return export_invoice_pdf(v)
+
+        def _on_success(p):
+            ThemedMessageBox.information(self, "PDF Exported", f"Invoice PDF generated:\n{p}")
             try:
-                p = export_invoice_pdf(v)
-                QMessageBox.information(self, "PDF Exported", f"Invoice PDF generated:\n{p}")
                 os.startfile(str(p))
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to generate PDF: {e}")
+            except Exception:
+                pass
+
+        def _on_error(e):
+            ThemedMessageBox.critical(self, "Error", f"Failed to generate PDF: {e}")
+
+        run_in_background(
+            _worker,
+            on_result=_on_success,
+            on_error=_on_error,
+            v_id=vid
+        )
 
     def export_excel(self):
         if not self.current_data:
             return
-        try:
-            p = export_daybook_excel(self.current_data)
-            QMessageBox.information(self, "Excel Exported", f"Day Book saved to:\n{p}")
-            os.startfile(str(p))
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to generate Excel: {e}")
+
+        def _on_success(p):
+            ThemedMessageBox.information(self, "Excel Exported", f"Day Book saved to:\n{p}")
+            try:
+                os.startfile(str(p))
+            except Exception:
+                pass
+
+        def _on_error(e):
+            ThemedMessageBox.critical(self, "Error", f"Failed to generate Excel: {e}")
+
+        run_in_background(
+            export_daybook_excel,
+            on_result=_on_success,
+            on_error=_on_error,
+            trigger_button=self.btn_excel,
+            daybook_data=self.current_data
+        )

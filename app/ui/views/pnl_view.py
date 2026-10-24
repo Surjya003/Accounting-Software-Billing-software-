@@ -1,7 +1,6 @@
 """
 Profit & Loss Statement View
-Auto-calculated P&L from vouchers, invoices, and expenses.
-Inspired by Vyapar's P&L and TallyPrime's Trading & P&L Account.
+Auto-calculated P&L from vouchers, invoices, and expenses with reactive charts.
 """
 from datetime import date
 from PySide6.QtWidgets import (
@@ -15,16 +14,24 @@ from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush
 from app.services.pnl_service import get_profit_loss_statement
 from app.config import CURRENCY_SYMBOL
 from app.ui.widgets.stat_card import StatCard
+from app.ui.theme import theme_manager
+from app.ui.theme.widgets import (
+    PageHeaderWidget, CardFrame
+)
 
 
 class PnLBarChart(QWidget):
-    """Monthly Net Profit bar chart using QPainter."""
+    """Monthly Net Profit bar chart using QPainter with full theme support."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.data = []
         self.setMinimumHeight(200)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        theme_manager.theme_changed.connect(self.on_theme_changed)
+
+    def on_theme_changed(self, theme_name):
+        self.update()
 
     def set_data(self, data):
         self.data = data or []
@@ -36,6 +43,14 @@ class PnLBarChart(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
+        t = theme_manager.current_theme
+        border_col = theme_manager.qcolor("border")
+        sec_text_col = theme_manager.qcolor("text_secondary")
+        pri_text_col = theme_manager.qcolor("text_primary")
+        rev_col = theme_manager.qcolor("accent")
+        succ_col = theme_manager.qcolor("success")
+        dang_col = theme_manager.qcolor("danger")
+
         w = self.width()
         h = self.height()
         ml, mr, mt, mb = 68, 16, 28, 36
@@ -45,20 +60,20 @@ class PnLBarChart(QWidget):
             painter.end()
             return
 
-        all_vals = [d["revenue"] for d in self.data] + [abs(d["net_profit"]) for d in self.data]
+        all_vals = [d.get("revenue", 0.0) for d in self.data] + [abs(d.get("net_profit", 0.0)) for d in self.data]
         max_val = max(all_vals) if all_vals and max(all_vals) > 0 else 1.0
         n = len(self.data)
         group_w = cw / n
         bar_w = max(group_w * 0.32, 10)
 
         # Grid lines
-        painter.setPen(QPen(QColor("#D4C49E"), 1))
         for i in range(5):
             y = mt + ch - (i * ch / 4)
+            painter.setPen(QPen(border_col, 1))
             painter.drawLine(int(ml), int(y), int(w - mr), int(y))
             val = max_val * i / 4
-            painter.setPen(QPen(QColor("#6B6558"), 1))
-            painter.setFont(QFont("Consolas", 8))
+            painter.setPen(QPen(sec_text_col, 1))
+            painter.setFont(theme_manager.get_font("caption"))
             if val >= 100000:
                 label = f"₹{val/100000:.1f}L"
             elif val >= 1000:
@@ -66,40 +81,41 @@ class PnLBarChart(QWidget):
             else:
                 label = f"₹{val:.0f}"
             painter.drawText(QRect(0, int(y) - 8, ml - 8, 16), Qt.AlignRight | Qt.AlignVCenter, label)
-            painter.setPen(QPen(QColor("#D4C49E"), 1))
 
         for i, d in enumerate(self.data):
             xc = ml + group_w * i + group_w / 2
             # Revenue bar
-            rev_h = (d["revenue"] / max_val) * ch if max_val > 0 else 0
-            painter.setBrush(QBrush(QColor("#2C3E63")))
+            rev_val = d.get("revenue", 0.0)
+            rev_h = (rev_val / max_val) * ch if max_val > 0 else 0
+            painter.setBrush(QBrush(rev_col))
             painter.setPen(Qt.NoPen)
             painter.drawRect(QRectF(xc - bar_w - 2, mt + ch - rev_h, bar_w, rev_h))
 
             # Net profit bar
-            np_val = d["net_profit"]
+            np_val = d.get("net_profit", 0.0)
             np_h = (abs(np_val) / max_val) * ch if max_val > 0 else 0
-            color = QColor("#2F6844") if np_val >= 0 else QColor("#8B2635")
+            color = succ_col if np_val >= 0 else dang_col
             painter.setBrush(QBrush(color))
             painter.drawRect(QRectF(xc + 2, mt + ch - np_h, bar_w, np_h))
 
             # Month label
-            painter.setPen(QPen(QColor("#6B6558"), 1))
-            painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
-            painter.drawText(QRect(int(xc - group_w / 2), int(mt + ch + 4), int(group_w), 20), Qt.AlignCenter, d["month_short"])
+            painter.setPen(QPen(sec_text_col, 1))
+            painter.setFont(theme_manager.get_font("caption", bold=True))
+            m_lbl = d.get("month_short") or d.get("month", d.get("name", ""))
+            painter.drawText(QRect(int(xc - group_w / 2), int(mt + ch + 4), int(group_w), 20), Qt.AlignCenter, m_lbl)
 
         # Legend
-        painter.setFont(QFont("Segoe UI", 9))
-        painter.setBrush(QBrush(QColor("#2C3E63")))
+        painter.setFont(theme_manager.get_font("caption"))
+        painter.setBrush(QBrush(rev_col))
         painter.setPen(Qt.NoPen)
         painter.drawRect(QRectF(w - 200, 6, 12, 12))
-        painter.setPen(QPen(QColor("#1B1B18"), 1))
+        painter.setPen(QPen(pri_text_col, 1))
         painter.drawText(QRect(int(w - 184), 4, 80, 16), Qt.AlignLeft | Qt.AlignVCenter, "Revenue")
 
-        painter.setBrush(QBrush(QColor("#2F6844")))
+        painter.setBrush(QBrush(succ_col))
         painter.setPen(Qt.NoPen)
         painter.drawRect(QRectF(w - 100, 6, 12, 12))
-        painter.setPen(QPen(QColor("#1B1B18"), 1))
+        painter.setPen(QPen(pri_text_col, 1))
         painter.drawText(QRect(int(w - 84), 4, 80, 16), Qt.AlignLeft | Qt.AlignVCenter, "Net Profit")
 
         painter.end()
@@ -114,44 +130,58 @@ class ProfitLossView(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(14)
 
         # ── Header ──
-        header = QHBoxLayout()
-        lbl_title = QLabel("📊 Profit & Loss Statement")
-        lbl_title.setStyleSheet("font-size: 20px; font-weight: 700; color: #1B1B18;")
-        header.addWidget(lbl_title)
-        header.addStretch()
+        self.header_widget = PageHeaderWidget(
+            title="Profit & Loss Statement",
+            subtitle="Trading, cost of goods, and net operational profit analysis"
+        )
 
-        header.addWidget(QLabel("From:"))
+        hdr_filter_box = QHBoxLayout()
+        hdr_filter_box.setSpacing(8)
+
+        hdr_filter_box.addWidget(QLabel("From:"))
         self.date_from = QDateEdit()
         self.date_from.setCalendarPopup(True)
         today = date.today()
         fy_start = date(today.year, 4, 1) if today.month >= 4 else date(today.year - 1, 4, 1)
         self.date_from.setDate(QDate(fy_start.year, fy_start.month, fy_start.day))
-        header.addWidget(self.date_from)
+        self.date_from.setDisplayFormat("dd-MM-yyyy")
+        hdr_filter_box.addWidget(self.date_from)
 
-        header.addWidget(QLabel("To:"))
+        hdr_filter_box.addWidget(QLabel("To:"))
         self.date_to = QDateEdit()
         self.date_to.setCalendarPopup(True)
         self.date_to.setDate(QDate.currentDate())
-        header.addWidget(self.date_to)
+        self.date_to.setDisplayFormat("dd-MM-yyyy")
+        hdr_filter_box.addWidget(self.date_to)
 
-        btn_gen = QPushButton("📈 Generate P&L")
-        btn_gen.setObjectName("PrimaryBtn")
-        btn_gen.setStyleSheet("padding: 8px 18px;")
-        btn_gen.clicked.connect(self.load_data)
-        header.addWidget(btn_gen)
-        layout.addLayout(header)
+        from app.ui.widgets.quick_date_selector import QuickDateSelector
+        self.quick_dates = QuickDateSelector(self.date_from, self.date_to, on_change=self.load_data)
+        hdr_filter_box.addWidget(self.quick_dates)
+
+        self.btn_gen = QPushButton("Generate P&L")
+        self.btn_gen.setIcon(theme_manager.get_icon("refresh", size=16))
+        self.btn_gen.setProperty("variant", "primary")
+        self.btn_gen.setFixedHeight(36)
+        self.btn_gen.clicked.connect(self.load_data)
+        hdr_filter_box.addWidget(self.btn_gen)
+
+        w_hdr = QWidget()
+        w_hdr.setLayout(hdr_filter_box)
+        self.header_widget.add_custom_action(w_hdr)
+
+        layout.addWidget(self.header_widget)
 
         # ── KPI Cards ──
         kpi_box = QHBoxLayout()
         kpi_box.setSpacing(12)
-        self.card_revenue = StatCard("Total Revenue", f"{CURRENCY_SYMBOL}0.00")
-        self.card_cogs = StatCard("Cost of Goods", f"{CURRENCY_SYMBOL}0.00")
-        self.card_gross = StatCard("Gross Profit", f"{CURRENCY_SYMBOL}0.00")
-        self.card_net = StatCard("Net Profit", f"{CURRENCY_SYMBOL}0.00")
+        self.card_revenue = StatCard("TOTAL REVENUE", f"{CURRENCY_SYMBOL}0.00", "Billed revenue", token_name="accent")
+        self.card_cogs = StatCard("COST OF GOODS", f"{CURRENCY_SYMBOL}0.00", "Purchases & inventory cost", token_name="warning")
+        self.card_gross = StatCard("GROSS PROFIT", f"{CURRENCY_SYMBOL}0.00", "Revenue minus COGS", token_name="info")
+        self.card_net = StatCard("NET PROFIT", f"{CURRENCY_SYMBOL}0.00", "After operating expenses", token_name="success")
         for card in [self.card_revenue, self.card_cogs, self.card_gross, self.card_net]:
             kpi_box.addWidget(card)
         layout.addLayout(kpi_box)
@@ -161,13 +191,13 @@ class ProfitLossView(QWidget):
         content.setSpacing(16)
 
         # Left: P&L Statement Table
-        left_frame = QFrame()
-        left_frame.setObjectName("Card")
+        left_frame = CardFrame()
         left_layout = QVBoxLayout(left_frame)
-        left_layout.setContentsMargins(12, 12, 12, 12)
+        left_layout.setContentsMargins(14, 14, 14, 14)
+        left_layout.setSpacing(10)
 
         lbl_stmt = QLabel("TRADING & PROFIT AND LOSS ACCOUNT")
-        lbl_stmt.setStyleSheet("font-size: 14px; font-weight: 700; color: #2C3E63; letter-spacing: 1px;")
+        lbl_stmt.setFont(theme_manager.get_font("subtitle", bold=True))
         left_layout.addWidget(lbl_stmt)
 
         self.stmt_table = QTableWidget()
@@ -176,19 +206,20 @@ class ProfitLossView(QWidget):
         self.stmt_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.stmt_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
         self.stmt_table.setColumnWidth(1, 180)
+        self.stmt_table.verticalHeader().setDefaultSectionSize(34)
+        self.stmt_table.verticalHeader().setVisible(False)
         self.stmt_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.stmt_table.setAlternatingRowColors(False)
         left_layout.addWidget(self.stmt_table)
         content.addWidget(left_frame, 3)
 
         # Right: Chart + Margin info
-        right_frame = QFrame()
-        right_frame.setObjectName("Card")
+        right_frame = CardFrame()
         right_layout = QVBoxLayout(right_frame)
-        right_layout.setContentsMargins(12, 12, 12, 12)
+        right_layout.setContentsMargins(14, 14, 14, 14)
+        right_layout.setSpacing(10)
 
         lbl_chart = QLabel("Monthly Revenue vs Net Profit")
-        lbl_chart.setStyleSheet("font-size: 13px; font-weight: 600; color: #2C3E63;")
+        lbl_chart.setFont(theme_manager.get_font("subtitle", bold=True))
         right_layout.addWidget(lbl_chart)
 
         self.chart = PnLBarChart()
@@ -198,9 +229,9 @@ class ProfitLossView(QWidget):
         margin_box = QVBoxLayout()
         margin_box.setSpacing(6)
         self.lbl_gross_margin = QLabel("Gross Margin: —")
-        self.lbl_gross_margin.setStyleSheet("font-size: 14px; font-weight: 700; color: #2F6844;")
+        self.lbl_gross_margin.setFont(theme_manager.get_font("body", bold=True))
         self.lbl_net_margin = QLabel("Net Margin: —")
-        self.lbl_net_margin.setStyleSheet("font-size: 14px; font-weight: 700; color: #2C3E63;")
+        self.lbl_net_margin.setFont(theme_manager.get_font("body", bold=True))
         margin_box.addWidget(self.lbl_gross_margin)
         margin_box.addWidget(self.lbl_net_margin)
         right_layout.addLayout(margin_box)
@@ -208,12 +239,26 @@ class ProfitLossView(QWidget):
         content.addWidget(right_frame, 2)
         layout.addLayout(content, 1)
 
+        self.load_data()
+
     def load_data(self):
         start = self.date_from.date().toPython()
         end = self.date_to.date().toPython()
 
-        pnl = get_profit_loss_statement(start, end)
+        from app.ui.async_worker import run_in_background
+        run_in_background(
+            get_profit_loss_statement,
+            on_result=self._on_pnl_loaded,
+            on_error=self._on_pnl_error,
+            trigger_button=getattr(self, "btn_gen", None),
+            start_date=start,
+            end_date=end
+        )
 
+    def _on_pnl_error(self, exc):
+        ThemedMessageBox.critical(self, "Error Generating P&L", f"Could not calculate P&L: {exc}")
+
+    def _on_pnl_loaded(self, pnl):
         revenue = pnl["revenue"]["total_sales"]
         cogs = pnl["cost_of_goods"]["total_purchases"]
         gross = pnl["gross_profit"]
@@ -226,7 +271,6 @@ class ProfitLossView(QWidget):
         self.card_cogs.set_value(f"{CURRENCY_SYMBOL}{cogs:,.2f}")
         self.card_gross.set_value(f"{CURRENCY_SYMBOL}{gross:,.2f}")
 
-        net_color = "#2F6844" if net >= 0 else "#8B2635"
         net_label = f"{CURRENCY_SYMBOL}{net:,.2f}" if net >= 0 else f"-{CURRENCY_SYMBOL}{abs(net):,.2f}"
         self.card_net.set_value(net_label)
 
@@ -259,8 +303,8 @@ class ProfitLossView(QWidget):
         for i, (label, amount, is_header, is_total) in enumerate(rows):
             lbl_item = QTableWidgetItem(label)
             if is_header:
-                lbl_item.setFont(QFont("Segoe UI", 12, QFont.Bold))
-                lbl_item.setForeground(QColor("#2C3E63"))
+                lbl_item.setFont(theme_manager.get_font("body", bold=True))
+                lbl_item.setForeground(theme_manager.qcolor("accent"))
             self.stmt_table.setItem(i, 0, lbl_item)
 
             if amount != "" and amount is not None:
@@ -269,13 +313,13 @@ class ProfitLossView(QWidget):
                 amt_item = QTableWidgetItem(amt_text)
                 amt_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 if is_total:
-                    amt_item.setFont(QFont("Consolas", 13, QFont.Bold))
+                    amt_item.setFont(theme_manager.get_font("body", bold=True))
                     if val >= 0:
-                        amt_item.setForeground(QColor("#2F6844"))
+                        amt_item.setForeground(theme_manager.qcolor("success"))
                     else:
-                        amt_item.setForeground(QColor("#8B2635"))
+                        amt_item.setForeground(theme_manager.qcolor("danger"))
                 else:
-                    amt_item.setFont(QFont("Consolas", 12))
+                    amt_item.setFont(theme_manager.get_font("body"))
                 self.stmt_table.setItem(i, 1, amt_item)
             else:
                 self.stmt_table.setItem(i, 1, QTableWidgetItem(""))
@@ -284,6 +328,4 @@ class ProfitLossView(QWidget):
         self.chart.set_data(pnl.get("monthly_trend", []))
 
 
-# Alias for concise import
 PnLView = ProfitLossView
-

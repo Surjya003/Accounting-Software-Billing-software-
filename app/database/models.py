@@ -38,6 +38,24 @@ class CompanyProfile(Base):
     
     terms_conditions = Column(Text, nullable=True, default="1. Goods once sold will not be taken back.\n2. Interest @ 18% p.a. will be charged if payment is delayed beyond due date.\n3. Subject to local jurisdiction.")
     financial_year = Column(String(10), nullable=True, default="2024-25")
+    allow_negative_stock = Column(Boolean, default=False, nullable=False)
+
+    # PDF Document Suite Settings
+    declaration = Column(Text, nullable=True, default="We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.")
+    terms_quotation = Column(Text, nullable=True, default="1. Validity: 30 days from date of quotation.\n2. Payment: 100% against delivery.\n3. Taxes: GST extra as applicable.")
+    terms_po = Column(Text, nullable=True, default="1. Quote PO number on all invoices and delivery challans.\n2. Goods subject to inspection and approval.")
+    notes_challan = Column(Text, nullable=True, default="Goods sent on approval/job work basis. Not for sale.")
+    terms_proforma = Column(Text, nullable=True, default="Goods will be dispatched immediately upon receipt of full payment.")
+    seal_path = Column(String(500), nullable=True)
+    signature_path = Column(String(500), nullable=True)
+    number_format = Column(String(20), nullable=True, default="Indian")
+    show_value_on_challan = Column(Boolean, default=False)
+    print_all_copies = Column(Boolean, default=False)
+    print_hsn_summary = Column(Boolean, default=True)
+    stock_valuation_method = Column(String(50), nullable=True, default="weighted_average")
+    ageing_allocation_method = Column(String(50), nullable=True, default="Oldest first")
+    whatsapp_template = Column(Text, nullable=True, default="Dear {party_name},\n\nGreetings from *{company_name}*!\n\nThis is a gentle reminder that your current outstanding balance is *₹{amount}*.\n\n📊 *Overdue Aging Summary:*\n• 0-30 Days: ₹{b0}\n• 31-60 Days: ₹{b31}\n• 61-90 Days: ₹{b61}\n• 90+ Days: ₹{b90}\n\n💳 *Bank Transfer Details:*\n{bank_details}\n\nKindly arrange for payment at your earliest convenience. If already paid, please ignore this message.\n\nWarm regards,\n*{company_name}*")
+
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     def to_dict(self):
@@ -62,6 +80,14 @@ class Party(Base):
     state = Column(String(100), nullable=True, default="Maharashtra")
     state_code = Column(String(2), nullable=True, default="27")
     pincode = Column(String(10), nullable=True)
+
+    # Separate Shipping Address
+    shipping_address = Column(Text, nullable=True)
+    shipping_city = Column(String(100), nullable=True)
+    shipping_state = Column(String(100), nullable=True)
+    shipping_state_code = Column(String(2), nullable=True)
+    shipping_pincode = Column(String(10), nullable=True)
+    same_as_billing = Column(Boolean, default=True)
     
     credit_period_days = Column(Integer, default=30)
     credit_limit = Column(Numeric(15, 2), default=Decimal("0.00"))
@@ -146,6 +172,11 @@ class Voucher(Base):
             d[k] = float(val) if val is not None else 0.0
         d['party_name'] = self.party.name if self.party else ""
         return d
+
+    def __getitem__(self, item):
+        if hasattr(self, item):
+            return getattr(self, item)
+        raise KeyError(item)
 
 
 class VoucherItem(Base):
@@ -245,7 +276,7 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    invoice_number = Column(String(50), nullable=False, index=True)
+    invoice_number = Column(String(50), unique=True, nullable=False, index=True)
     invoice_date = Column(Date, nullable=False, index=True)
     party_id = Column(Integer, ForeignKey("parties.id", ondelete="CASCADE"), nullable=False, index=True)
     subtotal = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
@@ -275,6 +306,20 @@ class Invoice(Base):
     po_number = Column(String(50), nullable=True)   # Purchase Order reference
     pi_number = Column(String(50), nullable=True)   # Proforma Invoice reference
 
+    # PDF Reference Grid & Details
+    delivery_note = Column(String(100), nullable=True)
+    mode_terms_of_payment = Column(String(100), nullable=True)
+    reference_no_date = Column(String(100), nullable=True)
+    other_references = Column(String(100), nullable=True)
+    buyers_order_no = Column(String(100), nullable=True)
+    buyers_order_date = Column(Date, nullable=True)
+    dispatch_doc_no = Column(String(100), nullable=True)
+    dispatched_through = Column(String(100), nullable=True)
+    terms_of_delivery = Column(Text, nullable=True)
+    place_of_supply = Column(String(100), nullable=True)
+    reverse_charge = Column(Boolean, default=False)
+    copy_label = Column(String(50), default="ORIGINAL FOR RECIPIENT")
+
     # Relationships
     party = relationship("Party", foreign_keys=[party_id])
     items = relationship("InvoiceItem", back_populates="invoice", cascade="all, delete-orphan")
@@ -290,6 +335,29 @@ class Invoice(Base):
             d[k] = float(val) if val is not None else 0.0
         d['party_name'] = self.party.name if self.party else ""
         return d
+
+    def __getitem__(self, item):
+        alias_map = {
+            "cgst_amount": "cgst_total",
+            "sgst_amount": "sgst_total",
+            "igst_amount": "igst_total",
+        }
+        attr = alias_map.get(item, item)
+        if hasattr(self, attr):
+            return getattr(self, attr)
+        raise KeyError(item)
+
+    @property
+    def cgst_amount(self):
+        return self.cgst_total
+
+    @property
+    def sgst_amount(self):
+        return self.sgst_total
+
+    @property
+    def igst_amount(self):
+        return self.igst_total
 
 
 class InvoiceItem(Base):
@@ -331,7 +399,7 @@ class ProformaInvoice(Base):
     __tablename__ = "proforma_invoices"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    proforma_number = Column(String(50), nullable=False, index=True)
+    proforma_number = Column(String(50), unique=True, nullable=False, index=True)
     proforma_date = Column(Date, nullable=False, index=True)
     party_id = Column(Integer, ForeignKey("parties.id", ondelete="CASCADE"), nullable=False, index=True)
     subtotal = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
@@ -358,6 +426,15 @@ class ProformaInvoice(Base):
     bank_ifsc = Column(String(20), nullable=True)
     po_number = Column(String(50), nullable=True)
     pi_number = Column(String(50), nullable=True)
+
+    valid_until = Column(Date, nullable=True)
+    advance_percent = Column(Numeric(5, 2), default=Decimal("0.00"))
+    advance_received = Column(Numeric(15, 2), default=Decimal("0.00"))
+    payment_terms = Column(String(200), nullable=True)
+    delivery_period = Column(String(100), nullable=True)
+    customer_po_no = Column(String(100), nullable=True)
+    customer_po_date = Column(Date, nullable=True)
+    linked_invoice_reference = Column(String(50), nullable=True)
 
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
@@ -411,7 +488,7 @@ class Quotation(Base):
     __tablename__ = "quotations"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    quotation_number = Column(String(50), nullable=False, index=True)
+    quotation_number = Column(String(50), unique=True, nullable=False, index=True)
     quotation_date = Column(Date, nullable=False, index=True)
     valid_until = Column(Date, nullable=True)  # Quotation validity date
     party_id = Column(Integer, ForeignKey("parties.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -439,6 +516,20 @@ class Quotation(Base):
     bank_ifsc = Column(String(20), nullable=True)
     po_number = Column(String(50), nullable=True)
     reference_number = Column(String(50), nullable=True)  # Customer's reference
+
+    kind_attn = Column(String(100), nullable=True)
+    enquiry_ref_date = Column(String(100), nullable=True)
+    subject = Column(String(255), nullable=True)
+    price_basis = Column(String(100), nullable=True)
+    terms_payment = Column(String(200), nullable=True)
+    terms_delivery = Column(String(200), nullable=True)
+    terms_validity = Column(String(200), nullable=True)
+    terms_freight = Column(String(200), nullable=True)
+    terms_packing = Column(String(200), nullable=True)
+    terms_warranty = Column(String(200), nullable=True)
+    terms_taxes = Column(String(200), nullable=True)
+    terms_inspection = Column(String(200), nullable=True)
+    terms_jurisdiction = Column(String(200), nullable=True)
 
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
@@ -496,7 +587,7 @@ class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    po_number = Column(String(50), nullable=False, index=True)
+    po_number = Column(String(50), unique=True, nullable=False, index=True)
     po_date = Column(Date, nullable=False, index=True)
     party_id = Column(Integer, ForeignKey("parties.id", ondelete="CASCADE"), nullable=False, index=True)
     subtotal = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
@@ -504,6 +595,17 @@ class PurchaseOrder(Base):
     total_amount = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
     status = Column(String(20), default="draft", nullable=False)  # draft, sent, received, cancelled
     notes = Column(Text, nullable=True)
+
+    revision = Column(String(20), default="0")
+    quotation_ref = Column(String(100), nullable=True)
+    quotation_date = Column(Date, nullable=True)
+    delivery_required_by = Column(Date, nullable=True)
+    payment_terms = Column(String(200), nullable=True)
+    delivery_terms = Column(String(100), nullable=True)
+    mode_of_dispatch = Column(String(100), nullable=True)
+    insurance = Column(String(100), nullable=True)
+    ship_to_address = Column(Text, nullable=True)
+    special_instructions = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -532,6 +634,8 @@ class PurchaseOrderItem(Base):
     received_quantity = Column(Numeric(12, 3), default=Decimal("0.000"), nullable=False)
     unit = Column(String(20), default="PCS", nullable=False)
     unit_price = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
+    delivery_date = Column(Date, nullable=True)
+    item_code = Column(String(50), nullable=True)
     tax_rate = Column(Numeric(5, 2), default=Decimal("0.00"), nullable=False)
     tax_amount = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
     total_amount = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
@@ -552,7 +656,7 @@ class DeliveryChallan(Base):
     __tablename__ = "delivery_challans"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    challan_number = Column(String(50), nullable=False, index=True)
+    challan_number = Column(String(50), unique=True, nullable=False, index=True)
     challan_date = Column(Date, nullable=False, index=True)
     party_id = Column(Integer, ForeignKey("parties.id", ondelete="CASCADE"), nullable=False, index=True)
     subtotal = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
@@ -565,6 +669,23 @@ class DeliveryChallan(Base):
     is_interstate = Column(Boolean, default=False)
     transport_details = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
+
+    reason_for_transportation = Column(String(50), default="Delivery (invoice to follow)")
+    dispatch_datetime = Column(String(50), nullable=True)
+    transporter_name = Column(String(200), nullable=True)
+    transporter_id = Column(String(50), nullable=True)
+    vehicle_no = Column(String(50), nullable=True)
+    driver_name = Column(String(100), nullable=True)
+    driver_mobile = Column(String(20), nullable=True)
+    lr_no = Column(String(50), nullable=True)
+    lr_date = Column(Date, nullable=True)
+    eway_bill_no = Column(String(50), nullable=True)
+    from_place = Column(String(100), nullable=True)
+    to_place = Column(String(100), nullable=True)
+    distance_km = Column(Numeric(10, 2), nullable=True)
+    packages = Column(Integer, nullable=True)
+    weight = Column(Numeric(10, 3), nullable=True)
+    show_value = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -592,6 +713,8 @@ class ChallanItem(Base):
     quantity = Column(Numeric(12, 3), default=Decimal("1.000"), nullable=False)
     unit = Column(String(20), default="PCS", nullable=False)
     unit_price = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
+    qty_ordered = Column(Numeric(12, 3), nullable=True)
+    remarks = Column(String(255), nullable=True)
     tax_rate = Column(Numeric(5, 2), default=Decimal("0.00"), nullable=False)
     cgst_amount = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
     sgst_amount = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
@@ -615,7 +738,7 @@ class SalesReturn(Base):
     __tablename__ = "sales_returns"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    return_number = Column(String(50), nullable=False, index=True)
+    return_number = Column(String(50), unique=True, nullable=False, index=True)
     return_date = Column(Date, nullable=False, index=True)
     invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True)
     party_id = Column(Integer, ForeignKey("parties.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -624,6 +747,13 @@ class SalesReturn(Base):
     total_amount = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
     reason = Column(Text, nullable=True)
     status = Column(String(20), default="pending", nullable=False)  # pending, approved, rejected
+
+    reason_category = Column(String(50), default="Sales Return")
+    original_invoice_no = Column(String(50), nullable=True)
+    original_invoice_date = Column(Date, nullable=True)
+    adjustment_mode = Column(String(50), default="Credit Note")
+    adjustment_ref = Column(String(100), nullable=True)
+    returned_via = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -670,7 +800,7 @@ class PurchaseReturn(Base):
     __tablename__ = "purchase_returns"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    return_number = Column(String(50), nullable=False, index=True)
+    return_number = Column(String(50), unique=True, nullable=False, index=True)
     return_date = Column(Date, nullable=False, index=True)
     po_id = Column(Integer, ForeignKey("purchase_orders.id", ondelete="SET NULL"), nullable=True)
     party_id = Column(Integer, ForeignKey("parties.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -679,6 +809,13 @@ class PurchaseReturn(Base):
     total_amount = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
     reason = Column(Text, nullable=True)
     status = Column(String(20), default="pending", nullable=False)
+
+    reason_category = Column(String(50), default="Purchase Return")
+    original_invoice_no = Column(String(50), nullable=True)
+    original_invoice_date = Column(Date, nullable=True)
+    adjustment_mode = Column(String(50), default="Debit Note")
+    adjustment_ref = Column(String(100), nullable=True)
+    returned_via = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -891,3 +1028,100 @@ class CashBankTransaction(Base):
         d['account_name'] = self.account.account_name if self.account else ""
         d['party_name'] = self.party.name if self.party else ""
         return d
+
+
+class VoucherAllocation(Base):
+    """Stores bill-by-bill payment allocations against invoices (BUG-08)."""
+    __tablename__ = "voucher_allocations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    party_id = Column(Integer, ForeignKey("parties.id", ondelete="CASCADE"), nullable=False, index=True)
+    payment_voucher_id = Column(Integer, ForeignKey("vouchers.id", ondelete="CASCADE"), nullable=True, index=True)
+    invoice_voucher_id = Column(Integer, ForeignKey("vouchers.id", ondelete="CASCADE"), nullable=True, index=True)
+    allocated_amount = Column(Numeric(15, 2), default=Decimal("0.00"), nullable=False)
+    allocation_date = Column(Date, default=date.today, nullable=False)
+    allocation_type = Column(String(30), default="FIFO", nullable=False)  # FIFO, REFERENCE, OPENING
+    created_at = Column(DateTime, default=datetime.now)
+
+    party = relationship("Party")
+    payment_voucher = relationship("Voucher", foreign_keys=[payment_voucher_id])
+    invoice_voucher = relationship("Voucher", foreign_keys=[invoice_voucher_id])
+
+    def to_dict(self):
+        d = {c.name: getattr(self, c.name) for c in self.__table__.columns}
+        d["allocated_amount"] = float(self.allocated_amount) if self.allocated_amount is not None else 0.0
+        return d
+
+
+class User(Base):
+    """User accounts and RBAC permissions."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(50), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    salt = Column(String(64), nullable=False)
+    full_name = Column(String(100), nullable=True)
+    role = Column(String(30), default="Viewer", nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    failed_attempts = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True)
+    last_login = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "username": self.username,
+            "full_name": self.full_name or "",
+            "role": self.role,
+            "is_active": self.is_active,
+            "last_login": self.last_login.isoformat() if self.last_login else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+
+
+class PeriodLock(Base):
+    """Accounting period lock to prevent modifications before date."""
+    __tablename__ = "period_locks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    locked_until_date = Column(Date, nullable=False)
+    locked_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reason = Column(Text, nullable=True)
+    locked_at = Column(DateTime, default=datetime.now)
+
+    locked_by = relationship("User", foreign_keys=[locked_by_user_id])
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "locked_until_date": self.locked_until_date,
+            "reason": self.reason or "",
+            "locked_by_user_id": self.locked_by_user_id,
+            "locked_at": self.locked_at.isoformat() if self.locked_at else None
+        }
+
+
+class AuditLog(Base):
+    """Security and compliance audit trail."""
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime, default=datetime.now, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    username = Column(String(100), default="System", nullable=False)
+    action = Column(String(50), nullable=False)
+    table_name = Column(String(100), nullable=False, index=True)
+    record_id = Column(Integer, nullable=True)
+    old_values = Column(Text, nullable=True)
+    new_values = Column(Text, nullable=True)
+    ip_address = Column(String(50), nullable=True)
+    notes = Column(Text, nullable=True)
+
+    def to_dict(self):
+        d = {c.name: getattr(self, c.name) for c in self.__table__.columns}
+        if self.timestamp:
+            d["timestamp"] = self.timestamp.isoformat()
+        return d
+

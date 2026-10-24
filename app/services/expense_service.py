@@ -32,11 +32,11 @@ DEFAULT_CATEGORIES = [
 
 
 def ensure_default_categories():
-    """Seeds default expense categories if none exist."""
+    """Seeds default expense categories if missing."""
     with get_session() as session:
-        count = session.query(func.count(ExpenseCategory.id)).scalar() or 0
-        if count == 0:
-            for name, desc_text in DEFAULT_CATEGORIES:
+        existing_names = {c.name.lower() for c in session.query(ExpenseCategory).all()}
+        for name, desc_text in DEFAULT_CATEGORIES:
+            if name.lower() not in existing_names:
                 cat = ExpenseCategory(
                     name=name,
                     description=desc_text,
@@ -44,7 +44,8 @@ def ensure_default_categories():
                     is_active=True
                 )
                 session.add(cat)
-            session.commit()
+                existing_names.add(name.lower())
+        session.commit()
 
 
 def get_all_categories(include_inactive: bool = False) -> List[Dict[str, Any]]:

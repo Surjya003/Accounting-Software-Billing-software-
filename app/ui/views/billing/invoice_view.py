@@ -1,46 +1,49 @@
 """
 Invoice Management View — Create, Edit, View GST Tax Invoices
-Ported from Billing-software to PySide6 with Bahi-Khata theme.
+Polished with BillFlow Enterprise Theme System.
 """
+import os
+import subprocess
 from datetime import date
 from decimal import Decimal
+from typing import Optional
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QComboBox,
-    QDialog, QFormLayout, QDoubleSpinBox, QTextEdit, QMessageBox,
-    QDateEdit, QTabWidget, QRadioButton, QButtonGroup, QCheckBox
+    QDialog, QFormLayout, QDoubleSpinBox, QTextEdit,
+    QDateEdit, QTabWidget, QRadioButton, QButtonGroup, QCheckBox,
+    QScrollArea
 )
-from PySide6.QtCore import Qt, Signal, QDate
+from PySide6.QtCore import Qt, Signal, QDate, QEvent
 from PySide6.QtGui import QFont, QColor
 
 from app.services.billing import invoice_service, product_service
 from app.services.party_service import get_all_parties
+from app.ui.theme import (
+    theme_manager, PageHeaderWidget, CardFrame, ThemedMessageBox, StatusBadgeLabel,
+    configure_dialog_window_flags
+)
 
 
 class InvoiceItemWidget(QFrame):
     """Single line item row for the invoice form."""
     item_changed = Signal()
     remove_requested = Signal(object)
+    add_row_requested = Signal(object)
 
     def __init__(self, products_list=None, parent=None):
         super().__init__(parent)
         self.setObjectName("ItemRow")
-        self.setStyleSheet("""
-            QFrame#ItemRow {
-                background-color: #FBFBF9;
-                border: 1px solid #D4C49E;
-                border-radius: 4px;
-                padding: 4px;
-            }
-        """)
-        self.setMinimumHeight(48)
-        self.setMaximumHeight(56)
+        self.setProperty("variant", "sunken")
+        self.setMinimumHeight(38)
+        self.setMaximumHeight(44)
         self.products = products_list or []
         self.init_ui()
 
     def init_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setContentsMargins(8, 2, 8, 2)
         layout.setSpacing(8)
 
         self.cmb_product = QComboBox()
@@ -50,12 +53,13 @@ class InvoiceItemWidget(QFrame):
         for p in self.products:
             self.cmb_product.addItem(f"{p['name']} ({p.get('hsn_code', '')})", p)
         self.cmb_product.currentIndexChanged.connect(self._on_product_selected)
-        layout.addWidget(self.cmb_product, 3)
+        layout.addWidget(self.cmb_product, 4)
 
         self.spn_qty = QDoubleSpinBox()
         self.spn_qty.setRange(0.001, 999999)
         self.spn_qty.setDecimals(3)
         self.spn_qty.setValue(1)
+        self.spn_qty.setMaximumWidth(100)
         self.spn_qty.valueChanged.connect(self._recalculate)
         layout.addWidget(self.spn_qty, 1)
 
@@ -63,6 +67,7 @@ class InvoiceItemWidget(QFrame):
         self.spn_rate.setRange(0, 99999999.99)
         self.spn_rate.setDecimals(2)
         self.spn_rate.setPrefix("₹")
+        self.spn_rate.setMaximumWidth(120)
         self.spn_rate.valueChanged.connect(self._recalculate)
         layout.addWidget(self.spn_rate, 1)
 
@@ -70,26 +75,39 @@ class InvoiceItemWidget(QFrame):
         self.spn_disc.setRange(0, 100)
         self.spn_disc.setDecimals(2)
         self.spn_disc.setSuffix("%")
+        self.spn_disc.setMaximumWidth(85)
         self.spn_disc.valueChanged.connect(self._recalculate)
         layout.addWidget(self.spn_disc, 1)
 
         self.cmb_gst = QComboBox()
         self.cmb_gst.addItems(["0", "5", "12", "18", "28"])
         self.cmb_gst.setCurrentText("18")
+        self.cmb_gst.setMaximumWidth(75)
         self.cmb_gst.currentTextChanged.connect(self._recalculate)
+        self.cmb_gst.installEventFilter(self)
         layout.addWidget(self.cmb_gst, 1)
 
         self.lbl_total = QLabel("₹0.00")
-        self.lbl_total.setStyleSheet("font-family: Consolas; font-weight: bold; font-size: 13px;")
-        self.lbl_total.setMinimumWidth(100)
+        self.lbl_total.setProperty("variant", "tabular")
+        self.lbl_total.setFont(theme_manager.font("tabular"))
+        self.lbl_total.setMinimumWidth(95)
         self.lbl_total.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         layout.addWidget(self.lbl_total, 1)
 
-        btn_remove = QPushButton("✕")
+        btn_remove = QPushButton()
+        btn_remove.setProperty("variant", "danger")
+        btn_remove.setIcon(theme_manager.icon("close", color_token="danger", size=14))
         btn_remove.setFixedSize(28, 28)
-        btn_remove.setStyleSheet("color: #8B2635; font-weight: bold; border: 1px solid #8B2635; border-radius: 4px;")
+        btn_remove.setToolTip("Remove line item")
         btn_remove.clicked.connect(lambda: self.remove_requested.emit(self))
         layout.addWidget(btn_remove)
+
+    def eventFilter(self, watched, event):
+        if watched == self.cmb_gst and event.type() == QEvent.KeyPress:
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                self.add_row_requested.emit(self)
+                return True
+        return super().eventFilter(watched, event)
 
     def _on_product_selected(self, idx):
         data = self.cmb_product.itemData(idx)
@@ -130,8 +148,6 @@ class InvoiceItemWidget(QFrame):
         }
 
     def populate_item(self, item_data):
-        """Populate this widget from saved item data dict."""
-        # Set product combo
         product_id = item_data.get("product_id")
         if product_id:
             for i in range(self.cmb_product.count()):
@@ -151,15 +167,18 @@ class InvoiceItemWidget(QFrame):
 
 
 class InvoiceFormDialog(QDialog):
-    """Create / Edit invoice dialog."""
+    """Create / Edit invoice dialog with enterprise layout and totals hierarchy."""
+
     def __init__(self, invoice_data=None, parent=None):
         super().__init__(parent)
         self.invoice_data = invoice_data
         self.setWindowTitle("Edit Invoice" if invoice_data else "New Tax Invoice")
-        self.setMinimumSize(1000, 750)
+        configure_dialog_window_flags(self, min_width=980, min_height=660)
+        self.resize(1040, 750)
         self.item_widgets = []
         self.products = product_service.get_all_products()
         self.init_ui()
+
         if self.invoice_data:
             self.populate(self.invoice_data)
             items = self.invoice_data.get("items", [])
@@ -170,7 +189,6 @@ class InvoiceFormDialog(QDialog):
                     self.item_widgets[-1].populate_item(it)
             self._update_totals()
         else:
-            # Auto-fill defaults for new invoice
             self._load_company_defaults()
 
     def _load_company_defaults(self):
@@ -186,48 +204,29 @@ class InvoiceFormDialog(QDialog):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
 
-        title = QLabel("Edit Invoice" if self.invoice_data else "Create New Tax Invoice")
-        title.setStyleSheet("font-size: 18px; font-weight: 600; color: #1B1B18;")
+        # Header Title
+        title = QLabel("Edit Tax Invoice" if self.invoice_data else "Create New Tax Invoice")
+        title.setProperty("variant", "title")
+        title.setFont(theme_manager.font("title"))
         layout.addWidget(title)
 
-        # Reference Numbers: Invoice No, PO No, PI No
-        ref_frame = QFrame()
-        ref_frame.setObjectName("Card")
-        ref_layout = QHBoxLayout(ref_frame)
+        # Consolidated Header Card (Party, Date, Status, Numbers, Tax Mode)
+        header_card = CardFrame()
+        header_layout = QVBoxLayout(header_card)
+        header_layout.setContentsMargins(14, 10, 14, 10)
+        header_layout.setSpacing(8)
 
-        inv_no_box = QVBoxLayout()
-        inv_no_box.addWidget(QLabel("Invoice Number (auto if blank)"))
-        self.txt_invoice_number = QLineEdit()
-        self.txt_invoice_number.setPlaceholderText("Auto-generated e.g. INV/24-25/0001")
-        inv_no_box.addWidget(self.txt_invoice_number)
-        ref_layout.addLayout(inv_no_box, 2)
-
-        po_box = QVBoxLayout()
-        po_box.addWidget(QLabel("PO Number"))
-        self.txt_po_number = QLineEdit()
-        self.txt_po_number.setPlaceholderText("Purchase Order No.")
-        po_box.addWidget(self.txt_po_number)
-        ref_layout.addLayout(po_box, 1)
-
-        pi_box = QVBoxLayout()
-        pi_box.addWidget(QLabel("PI Number"))
-        self.txt_pi_number = QLineEdit()
-        self.txt_pi_number.setPlaceholderText("Proforma Invoice No.")
-        pi_box.addWidget(self.txt_pi_number)
-        ref_layout.addLayout(pi_box, 1)
-
-        layout.addWidget(ref_frame)
-
-        # Top form: Party, Date, Status
-        form_frame = QFrame()
-        form_frame.setObjectName("Card")
-        form_layout = QHBoxLayout(form_frame)
+        # Row 1: Party (stretch 3), Date (stretch 1), Status (stretch 1), Invoice No (stretch 2)
+        row1 = QHBoxLayout()
+        row1.setSpacing(12)
 
         party_box = QVBoxLayout()
-        party_box.addWidget(QLabel("Party *"))
+        lbl_party = QLabel("Party *")
+        lbl_party.setProperty("variant", "label")
+        party_box.addWidget(lbl_party)
         self.cmb_party = QComboBox()
         self.cmb_party.setEditable(True)
         self.cmb_party.lineEdit().setPlaceholderText("-- Select Party --")
@@ -236,185 +235,278 @@ class InvoiceFormDialog(QDialog):
         for p in parties:
             self.cmb_party.addItem(p["name"], p["id"])
         party_box.addWidget(self.cmb_party)
-        form_layout.addLayout(party_box, 2)
+        row1.addLayout(party_box, 3)
 
         date_box = QVBoxLayout()
-        date_box.addWidget(QLabel("Invoice Date *"))
+        lbl_date = QLabel("Invoice Date *")
+        lbl_date.setProperty("variant", "label")
+        date_box.addWidget(lbl_date)
         self.dt_date = QDateEdit(QDate.currentDate())
         self.dt_date.setCalendarPopup(True)
         self.dt_date.setDisplayFormat("dd-MM-yyyy")
         date_box.addWidget(self.dt_date)
-        form_layout.addLayout(date_box, 1)
+        row1.addLayout(date_box, 1)
 
         status_box = QVBoxLayout()
-        status_box.addWidget(QLabel("Status"))
+        lbl_status = QLabel("Status")
+        lbl_status.setProperty("variant", "label")
+        status_box.addWidget(lbl_status)
         self.cmb_status = QComboBox()
         self.cmb_status.addItems(["draft", "final", "cancelled"])
         status_box.addWidget(self.cmb_status)
-        form_layout.addLayout(status_box, 1)
+        row1.addLayout(status_box, 1)
 
-        # Tax Mode
+        inv_no_box = QVBoxLayout()
+        lbl_inv_no = QLabel("Invoice Number (auto if blank)")
+        lbl_inv_no.setProperty("variant", "label")
+        inv_no_box.addWidget(lbl_inv_no)
+        self.txt_invoice_number = QLineEdit()
+        self.txt_invoice_number.setPlaceholderText("Auto-generated e.g. INV/24-25/0001")
+        inv_no_box.addWidget(self.txt_invoice_number)
+        row1.addLayout(inv_no_box, 2)
+
+        header_layout.addLayout(row1)
+
+        # Row 2: Buyer PO # (stretch 1), PI Reference (stretch 1), Tax Mode (stretch 2)
+        row2 = QHBoxLayout()
+        row2.setSpacing(12)
+
+        po_box = QVBoxLayout()
+        lbl_po = QLabel("PO Number")
+        lbl_po.setProperty("variant", "label")
+        po_box.addWidget(lbl_po)
+        self.txt_po_number = QLineEdit()
+        self.txt_po_number.setPlaceholderText("Buyer PO No.")
+        po_box.addWidget(self.txt_po_number)
+        row2.addLayout(po_box, 1)
+
+        pi_box = QVBoxLayout()
+        lbl_pi = QLabel("PI Number")
+        lbl_pi.setProperty("variant", "label")
+        pi_box.addWidget(lbl_pi)
+        self.txt_pi_number = QLineEdit()
+        self.txt_pi_number.setPlaceholderText("Proforma Reference")
+        pi_box.addWidget(self.txt_pi_number)
+        row2.addLayout(pi_box, 1)
+
         tax_box = QVBoxLayout()
-        tax_box.addWidget(QLabel("Tax Mode"))
-        
+        lbl_tax_mode = QLabel("Tax Mode")
+        lbl_tax_mode.setProperty("variant", "label")
+        tax_box.addWidget(lbl_tax_mode)
         self.tax_mode_group = QButtonGroup()
         tax_layout = QHBoxLayout()
         self.rb_auto = QRadioButton("Auto")
         self.rb_intra = QRadioButton("Intra-State (CGST+SGST)")
         self.rb_inter = QRadioButton("Inter-State (IGST)")
         self.rb_auto.setChecked(True)
-        
         self.tax_mode_group.addButton(self.rb_auto, 0)
         self.tax_mode_group.addButton(self.rb_intra, 1)
         self.tax_mode_group.addButton(self.rb_inter, 2)
-        
         tax_layout.addWidget(self.rb_auto)
         tax_layout.addWidget(self.rb_intra)
         tax_layout.addWidget(self.rb_inter)
         tax_box.addLayout(tax_layout)
-        form_layout.addLayout(tax_box, 2)
+        row2.addLayout(tax_box, 2)
 
-        layout.addWidget(form_frame)
+        header_layout.addLayout(row2)
+        layout.addWidget(header_card)
 
         # Tabs Container
         self.tabs = QTabWidget()
-        layout.addWidget(self.tabs)
+        layout.addWidget(self.tabs, 1)
 
         # === TAB 1: LINE ITEMS ===
         tab_items = QWidget()
         tab_items_layout = QVBoxLayout(tab_items)
-        
-        # Items header
+        tab_items_layout.setContentsMargins(12, 10, 12, 10)
+        tab_items_layout.setSpacing(8)
+
+        # Items header row
         items_header = QHBoxLayout()
         lbl_items = QLabel("Line Items")
-        lbl_items.setStyleSheet("font-size: 15px; font-weight: 600; color: #1B1B18;")
+        lbl_items.setProperty("variant", "subtitle")
         items_header.addWidget(lbl_items)
         items_header.addStretch()
-        btn_add_item = QPushButton("+ Add Item")
-        btn_add_item.setObjectName("PrimaryBtn")
+
+        btn_add_item = QPushButton("Add Item")
+        btn_add_item.setProperty("variant", "primary")
+        btn_add_item.setIcon(theme_manager.icon("add", color_token="text_on_accent", size=14))
         btn_add_item.clicked.connect(self.add_item_row)
         items_header.addWidget(btn_add_item)
         tab_items_layout.addLayout(items_header)
 
-        # Column labels
+        # Column labels aligned with ItemRow inputs
         col_labels = QHBoxLayout()
         col_labels.setContentsMargins(8, 0, 8, 0)
-        for label, stretch in [("Product", 3), ("Qty", 1), ("Rate (₹)", 1), ("Disc %", 1), ("GST %", 1), ("Total", 1), ("", 0)]:
+        col_labels.setSpacing(8)
+        lbl_prod = QLabel("Product")
+        lbl_prod.setProperty("variant", "caption")
+        col_labels.addWidget(lbl_prod, 4)
+        for label, w in [("Qty", 100), ("Rate (₹)", 120), ("Disc %", 85), ("GST %", 75)]:
             lbl = QLabel(label)
-            lbl.setStyleSheet("font-size: 11px; font-weight: 600; color: #6B6558; text-transform: uppercase;")
-            if stretch:
-                col_labels.addWidget(lbl, stretch)
-            else:
-                col_labels.addWidget(lbl)
+            lbl.setProperty("variant", "caption")
+            lbl.setMaximumWidth(w)
+            col_labels.addWidget(lbl, 1)
+        lbl_t = QLabel("Total")
+        lbl_t.setProperty("variant", "caption")
+        lbl_t.setMinimumWidth(95)
+        lbl_t.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        col_labels.addWidget(lbl_t, 1)
+        lbl_sp = QLabel("")
+        lbl_sp.setFixedSize(28, 28)
+        col_labels.addWidget(lbl_sp)
         tab_items_layout.addLayout(col_labels)
 
-        # Items container inside a scroll area
+        # Items scroll area
         items_scroll = QWidget()
         self.items_layout = QVBoxLayout(items_scroll)
         self.items_layout.setSpacing(6)
         self.items_layout.setContentsMargins(0, 0, 0, 0)
-        self.items_layout.addStretch()  # Push items to top
+        self.items_layout.addStretch()
 
-        from PySide6.QtWidgets import QScrollArea
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(items_scroll)
-        scroll_area.setMinimumHeight(150)
-        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        tab_items_layout.addWidget(scroll_area)
+        scroll_area.setMinimumHeight(140)
+        tab_items_layout.addWidget(scroll_area, 1)
 
         # Add first item row
         self.add_item_row()
 
-        # Totals
-        totals_frame = QFrame()
-        totals_frame.setObjectName("Card")
+        # Polished Totals Panel with Clear Hierarchy
+        totals_frame = CardFrame()
+        totals_frame.setMinimumHeight(60)
+        totals_frame.setMaximumHeight(74)
         totals_layout = QHBoxLayout(totals_frame)
+        totals_layout.setContentsMargins(16, 8, 16, 8)
+        totals_layout.setSpacing(24)
         totals_layout.addStretch()
 
-        self.lbl_subtotal = QLabel("Subtotal: ₹0.00")
-        self.lbl_tax = QLabel("Tax: ₹0.00")
-        self.lbl_grand = QLabel("Total: ₹0.00")
-        self.lbl_grand.setStyleSheet("font-size: 18px; font-weight: bold; color: #2C3E63;")
-        for lbl in [self.lbl_subtotal, self.lbl_tax, self.lbl_grand]:
-            lbl.setStyleSheet(lbl.styleSheet() + "font-family: Consolas; padding: 4px 12px;")
-            totals_layout.addWidget(lbl)
+        # Subtotal
+        sub_box = QVBoxLayout()
+        lbl_sub_title = QLabel("TAXABLE VALUE")
+        lbl_sub_title.setProperty("variant", "caption")
+        sub_box.addWidget(lbl_sub_title)
+        self.lbl_subtotal = QLabel("₹0.00")
+        self.lbl_subtotal.setProperty("variant", "tabular")
+        self.lbl_subtotal.setFont(theme_manager.font("body"))
+        sub_box.addWidget(self.lbl_subtotal)
+        totals_layout.addLayout(sub_box)
 
-        tab_items_layout.addWidget(totals_frame)
+        # Tax
+        tax_tot_box = QVBoxLayout()
+        lbl_tax_title = QLabel("TOTAL GST")
+        lbl_tax_title.setProperty("variant", "caption")
+        tax_tot_box.addWidget(lbl_tax_title)
+        self.lbl_tax = QLabel("₹0.00")
+        self.lbl_tax.setProperty("variant", "tabular")
+        self.lbl_tax.setFont(theme_manager.font("body"))
+        tax_tot_box.addWidget(self.lbl_tax)
+        totals_layout.addLayout(tax_tot_box)
+
+        # Grand Total
+        grand_box = QVBoxLayout()
+        lbl_grand_title = QLabel("GRAND TOTAL")
+        lbl_grand_title.setProperty("variant", "caption")
+        grand_box.addWidget(lbl_grand_title)
+        self.lbl_grand = QLabel("₹0.00")
+        self.lbl_grand.setProperty("variant", "tabular")
+        f_grand = theme_manager.font("headline")
+        f_grand.setBold(True)
+        self.lbl_grand.setFont(f_grand)
+        grand_box.addWidget(self.lbl_grand)
+        totals_layout.addLayout(grand_box)
+
+        tab_items_layout.addWidget(totals_frame, 0)
         self.tabs.addTab(tab_items, "Items & Totals")
 
         # === TAB 2: LOGISTICS ===
         tab_log = QWidget()
         tab_log_layout = QFormLayout(tab_log)
-        
+        tab_log_layout.setContentsMargins(16, 16, 16, 16)
+        tab_log_layout.setSpacing(10)
+
         self.chk_same_address = QCheckBox("Same as Party Billing Address")
         self.chk_same_address.stateChanged.connect(self.toggle_shipping_address)
         tab_log_layout.addRow("", self.chk_same_address)
-        
+
         self.txt_shipping_address = QTextEdit()
         self.txt_shipping_address.setMaximumHeight(60)
-        tab_log_layout.addRow("Shipping Address", self.txt_shipping_address)
-        
+        tab_log_layout.addRow("Shipping Address:", self.txt_shipping_address)
+
         self.txt_transporter = QLineEdit()
-        tab_log_layout.addRow("Transporter Name", self.txt_transporter)
-        
+        tab_log_layout.addRow("Transporter Name:", self.txt_transporter)
+
         self.txt_vehicle_no = QLineEdit()
-        tab_log_layout.addRow("Vehicle No", self.txt_vehicle_no)
-        
+        tab_log_layout.addRow("Vehicle No:", self.txt_vehicle_no)
+
         self.txt_lr_no = QLineEdit()
-        tab_log_layout.addRow("LR No", self.txt_lr_no)
-        
+        tab_log_layout.addRow("LR No:", self.txt_lr_no)
+
         self.dt_lr_date = QDateEdit(QDate.currentDate())
         self.dt_lr_date.setCalendarPopup(True)
-        tab_log_layout.addRow("LR Date", self.dt_lr_date)
-        
+        self.dt_lr_date.setDisplayFormat("dd-MM-yyyy")
+        tab_log_layout.addRow("LR Date:", self.dt_lr_date)
+
         self.txt_eway_bill = QLineEdit()
-        tab_log_layout.addRow("E-Way Bill No", self.txt_eway_bill)
-        
+        tab_log_layout.addRow("E-Way Bill No:", self.txt_eway_bill)
+
         self.txt_destination = QLineEdit()
-        tab_log_layout.addRow("Destination", self.txt_destination)
-        
+        tab_log_layout.addRow("Destination:", self.txt_destination)
+
         self.tabs.addTab(tab_log, "Shipping & Logistics")
 
         # === TAB 3: TERMS & BANK ===
         tab_terms = QWidget()
         tab_terms_layout = QFormLayout(tab_terms)
-        
+        tab_terms_layout.setContentsMargins(16, 16, 16, 16)
+        tab_terms_layout.setSpacing(10)
+
         self.txt_terms = QTextEdit()
         self.txt_terms.setMaximumHeight(80)
         self.txt_terms.setPlaceholderText("e.g. Goods once sold cannot be returned.")
-        tab_terms_layout.addRow("Terms & Conditions", self.txt_terms)
-        
+        tab_terms_layout.addRow("Terms & Conditions:", self.txt_terms)
+
         self.txt_bank_name = QLineEdit()
-        tab_terms_layout.addRow("Bank Name", self.txt_bank_name)
-        
+        tab_terms_layout.addRow("Bank Name:", self.txt_bank_name)
+
         self.txt_bank_ac = QLineEdit()
-        tab_terms_layout.addRow("Bank A/C No", self.txt_bank_ac)
-        
+        tab_terms_layout.addRow("Bank A/C No:", self.txt_bank_ac)
+
         self.txt_bank_ifsc = QLineEdit()
-        tab_terms_layout.addRow("Bank IFSC Code", self.txt_bank_ifsc)
-        
+        tab_terms_layout.addRow("Bank IFSC Code:", self.txt_bank_ifsc)
+
         self.tabs.addTab(tab_terms, "Terms & Bank")
 
-        # Notes
+        # Optional Notes
         self.txt_notes = QTextEdit()
-        self.txt_notes.setMaximumHeight(50)
-        self.txt_notes.setPlaceholderText("Optional notes...")
+        self.txt_notes.setMaximumHeight(45)
+        self.txt_notes.setPlaceholderText("Optional remarks or invoice notes...")
         layout.addWidget(self.txt_notes)
 
-        # Buttons
+        # Dialog Buttons (Cancel on left, Primary Save on right)
         btn_layout = QHBoxLayout()
-        btn_save = QPushButton("Save Invoice")
-        btn_save.setObjectName("PrimaryBtn")
-        btn_save.setFixedHeight(40)
-        btn_save.clicked.connect(self.accept)
-        btn_cancel = QPushButton("Cancel")
-        btn_cancel.setFixedHeight(40)
-        btn_cancel.clicked.connect(self.reject)
-        btn_layout.addWidget(btn_save)
-        btn_layout.addWidget(btn_cancel)
         btn_layout.addStretch()
+
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.setProperty("variant", "secondary")
+        btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(btn_cancel)
+
+        self.btn_save = QPushButton("Save Invoice")
+        self.btn_save.setProperty("variant", "primary")
+        self.btn_save.setIcon(theme_manager.icon("check", color_token="text_on_accent", size=16))
+        self.btn_save.clicked.connect(self._on_save_clicked)
+        btn_layout.addWidget(self.btn_save)
+
         layout.addLayout(btn_layout)
+
+    def _on_save_clicked(self):
+        self.btn_save.setEnabled(False)
+        try:
+            self.accept()
+        finally:
+            self.btn_save.setEnabled(True)
 
     def toggle_shipping_address(self, state):
         if state:
@@ -428,10 +520,16 @@ class InvoiceFormDialog(QDialog):
         item = InvoiceItemWidget(products_list=self.products)
         item.item_changed.connect(self._update_totals)
         item.remove_requested.connect(self._remove_item)
+        item.add_row_requested.connect(self._on_item_add_row_requested)
         self.item_widgets.append(item)
-        # Insert before the stretch spacer (last item in layout)
         insert_pos = self.items_layout.count() - 1
         self.items_layout.insertWidget(insert_pos, item)
+        return item
+
+    def _on_item_add_row_requested(self, item):
+        if self.item_widgets and self.item_widgets[-1] == item:
+            new_item = self.add_item_row()
+            new_item.cmb_product.setFocus()
 
     def _remove_item(self, widget):
         if len(self.item_widgets) <= 1:
@@ -448,91 +546,90 @@ class InvoiceFormDialog(QDialog):
             qty = Decimal(d["quantity"])
             rate = Decimal(d["unit_price"])
             disc = Decimal(d["discount_pct"])
-            gst = Decimal(d["gst_rate_pct"] or "0")
+            gst = Decimal(d["tax_rate"])
+
             base = qty * rate
             discount = base * disc / Decimal("100")
             taxable = base - discount
-            t = taxable * gst / Decimal("100")
+            t_amt = taxable * gst / Decimal("100")
+
             subtotal += taxable
-            tax += t
-        total = subtotal + tax
-        self.lbl_subtotal.setText(f"Subtotal: ₹{float(subtotal):,.2f}")
-        self.lbl_tax.setText(f"Tax: ₹{float(tax):,.2f}")
-        self.lbl_grand.setText(f"Total: ₹{float(total):,.2f}")
+            tax += t_amt
 
-    def populate(self, data):
-        # Set party
-        for i in range(self.cmb_party.count()):
-            if self.cmb_party.itemData(i) == data.get("party_id"):
-                self.cmb_party.setCurrentIndex(i)
-                break
-        # Date
-        if data.get("invoice_date"):
-            d = data["invoice_date"]
-            if hasattr(d, 'year'):
+        grand = subtotal + tax
+        self.lbl_subtotal.setText(f"₹{float(subtotal):,.2f}")
+        self.lbl_tax.setText(f"₹{float(tax):,.2f}")
+        self.lbl_grand.setText(f"₹{float(grand):,.2f}")
+
+    def populate(self, inv):
+        self.txt_invoice_number.setText(inv.get("invoice_number", ""))
+        self.txt_po_number.setText(inv.get("po_number", "") or "")
+        self.txt_pi_number.setText(inv.get("pi_number", "") or "")
+
+        party_id = inv.get("party_id")
+        if party_id:
+            for i in range(self.cmb_party.count()):
+                if self.cmb_party.itemData(i) == party_id:
+                    self.cmb_party.setCurrentIndex(i)
+                    break
+
+        d = inv.get("invoice_date")
+        if d:
+            if hasattr(d, "year"):
                 self.dt_date.setDate(QDate(d.year, d.month, d.day))
-        self.cmb_status.setCurrentText(data.get("status", "draft"))
-        
-        tax_mode = data.get("tax_mode", 0)
-        if tax_mode == 1:
-            self.rb_intra.setChecked(True)
-        elif tax_mode == 2:
-            self.rb_inter.setChecked(True)
-        else:
-            self.rb_auto.setChecked(True)
 
-        # Reference numbers
-        self.txt_invoice_number.setText(data.get("invoice_number", "") or "")
-        self.txt_po_number.setText(data.get("po_number", "") or "")
-        self.txt_pi_number.setText(data.get("pi_number", "") or "")
-            
-        self.txt_notes.setPlainText(data.get("notes", "") or "")
-        
-        self.txt_shipping_address.setPlainText(data.get("shipping_address", "") or "")
-        self.txt_transporter.setText(data.get("transporter_name", "") or "")
-        self.txt_vehicle_no.setText(data.get("vehicle_no", "") or "")
-        self.txt_lr_no.setText(data.get("lr_no", "") or "")
-        if data.get("lr_date"):
-            ld = data["lr_date"]
-            if hasattr(ld, 'year'):
-                self.dt_lr_date.setDate(QDate(ld.year, ld.month, ld.day))
-        self.txt_eway_bill.setText(data.get("eway_bill_no", "") or "")
-        self.txt_destination.setText(data.get("destination", "") or "")
-        
-        self.txt_terms.setPlainText(data.get("terms_and_conditions", "") or "")
-        self.txt_bank_name.setText(data.get("bank_name", "") or "")
-        self.txt_bank_ac.setText(data.get("bank_ac_no", "") or "")
-        self.txt_bank_ifsc.setText(data.get("bank_ifsc", "") or "")
+        status = inv.get("status", "draft")
+        idx = self.cmb_status.findText(status)
+        if idx >= 0:
+            self.cmb_status.setCurrentIndex(idx)
+
+        self.txt_shipping_address.setPlainText(inv.get("shipping_address", "") or "")
+        self.txt_transporter.setText(inv.get("transporter_name", "") or "")
+        self.txt_vehicle_no.setText(inv.get("vehicle_no", "") or "")
+        self.txt_lr_no.setText(inv.get("lr_no", "") or "")
+        self.txt_eway_bill.setText(inv.get("eway_bill_no", "") or "")
+        self.txt_destination.setText(inv.get("destination", "") or "")
+        self.txt_terms.setPlainText(inv.get("terms_conditions", "") or "")
+        self.txt_notes.setPlainText(inv.get("notes", "") or "")
 
     def get_data(self):
-        party_id = self.cmb_party.currentData()
-        qd = self.dt_date.date()
-        items = [w.get_item_data() for w in self.item_widgets]
-        inv_num = self.txt_invoice_number.text().strip() or None
-        return {
-            "invoice_data": {
-                "party_id": party_id,
-                "invoice_number": inv_num,
-                "invoice_date": date(qd.year(), qd.month(), qd.day()),
-                "status": self.cmb_status.currentText(),
-                "tax_mode": self.tax_mode_group.checkedId(),
-                "notes": self.txt_notes.toPlainText(),
-                "po_number": self.txt_po_number.text().strip(),
-                "pi_number": self.txt_pi_number.text().strip(),
-                "shipping_address": self.txt_shipping_address.toPlainText(),
-                "transporter_name": self.txt_transporter.text(),
-                "vehicle_no": self.txt_vehicle_no.text(),
-                "lr_no": self.txt_lr_no.text(),
-                "lr_date": date(self.dt_lr_date.date().year(), self.dt_lr_date.date().month(), self.dt_lr_date.date().day()),
-                "eway_bill_no": self.txt_eway_bill.text(),
-                "destination": self.txt_destination.text(),
-                "terms_and_conditions": self.txt_terms.toPlainText(),
-                "bank_name": self.txt_bank_name.text(),
-                "bank_ac_no": self.txt_bank_ac.text(),
-                "bank_ifsc": self.txt_bank_ifsc.text()
-            },
-            "items_data": items,
+        q_d = self.dt_date.date()
+        inv_date = date(q_d.year(), q_d.month(), q_d.day())
+        q_lr_d = self.dt_lr_date.date()
+        lr_date = date(q_lr_d.year(), q_lr_d.month(), q_lr_d.day())
+
+        # Determine tax mode
+        tax_mode_id = self.tax_mode_group.checkedId()
+        is_interstate = None
+        if tax_mode_id == 1:
+            is_interstate = False
+        elif tax_mode_id == 2:
+            is_interstate = True
+
+        invoice_data = {
+            "invoice_number": self.txt_invoice_number.text().strip(),
+            "party_id": self.cmb_party.currentData(),
+            "invoice_date": inv_date,
+            "po_number": self.txt_po_number.text().strip(),
+            "pi_number": self.txt_pi_number.text().strip(),
+            "status": self.cmb_status.currentText(),
+            "is_interstate": is_interstate,
+            "shipping_address": self.txt_shipping_address.toPlainText().strip(),
+            "transporter_name": self.txt_transporter.text().strip(),
+            "vehicle_no": self.txt_vehicle_no.text().strip(),
+            "lr_no": self.txt_lr_no.text().strip(),
+            "lr_date": lr_date,
+            "eway_bill_no": self.txt_eway_bill.text().strip(),
+            "destination": self.txt_destination.text().strip(),
+            "terms_conditions": self.txt_terms.toPlainText().strip(),
+            "notes": self.txt_notes.toPlainText().strip(),
+            "bank_name": self.txt_bank_name.text().strip(),
+            "bank_account_no": self.txt_bank_ac.text().strip(),
+            "bank_ifsc": self.txt_bank_ifsc.text().strip(),
         }
+
+        items_data = [w.get_item_data() for w in self.item_widgets]
+        return {"invoice_data": invoice_data, "items_data": items_data}
 
 
 class InvoiceView(QWidget):
@@ -545,44 +642,29 @@ class InvoiceView(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
 
-        # Header
-        header = QHBoxLayout()
-        title_box = QVBoxLayout()
-        title_box.setSpacing(4)
-        lbl = QLabel("Tax Invoices")
-        lbl.setStyleSheet("font-size: 20px; font-weight: 600; color: #1B1B18;")
-        title_box.addWidget(lbl)
-        lbl_sub = QLabel("Create and manage GST tax invoices for customers")
-        lbl_sub.setStyleSheet("font-size: 12px; color: #6B6558;")
-        title_box.addWidget(lbl_sub)
-        header.addLayout(title_box)
-        header.addStretch()
-
-        btn_new = QPushButton("+ New Invoice")
-        btn_new.setObjectName("PrimaryBtn")
-        btn_new.setFixedHeight(36)
-        btn_new.clicked.connect(self.create_invoice)
-        header.addWidget(btn_new)
-
-        btn_refresh = QPushButton("Refresh")
-        btn_refresh.setFixedHeight(36)
-        btn_refresh.clicked.connect(self.load_invoices)
-        header.addWidget(btn_refresh)
-        layout.addLayout(header)
+        # Page Header
+        header = PageHeaderWidget("Tax Invoices", "Create and manage GST tax invoices for commercial customers")
+        header.add_action_button("New Invoice", icon_name="add", variant="primary", callback=self.create_invoice)
+        header.add_action_button("Refresh", icon_name="refresh", variant="secondary", callback=self.load_invoices)
+        layout.addWidget(header)
 
         # Filter bar
-        filter_frame = QFrame()
-        filter_frame.setObjectName("Card")
+        filter_frame = CardFrame()
         fl = QHBoxLayout(filter_frame)
         fl.setContentsMargins(12, 8, 12, 8)
+        fl.setSpacing(10)
 
         self.inp_search = QLineEdit()
         self.inp_search.setPlaceholderText("Search by invoice number or party name...")
         self.inp_search.textChanged.connect(self.load_invoices)
         fl.addWidget(self.inp_search, 2)
+
+        lbl_status = QLabel("Status:")
+        lbl_status.setProperty("variant", "label")
+        fl.addWidget(lbl_status)
 
         self.cmb_status = QComboBox()
         self.cmb_status.addItems(["All", "draft", "final", "cancelled"])
@@ -591,7 +673,7 @@ class InvoiceView(QWidget):
 
         layout.addWidget(filter_frame)
 
-        # Invoice table
+        # Invoice table (36px rows)
         self.table = QTableWidget()
         self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
@@ -607,32 +689,37 @@ class InvoiceView(QWidget):
         self.table.verticalHeader().setDefaultSectionSize(36)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.doubleClicked.connect(self.edit_invoice)
         layout.addWidget(self.table, 1)
 
-        # Bottom bar
+        # Bottom Action Bar
         bottom = QHBoxLayout()
         self.lbl_count = QLabel("0 invoices")
-        self.lbl_count.setStyleSheet("color: #6B6558; font-size: 12px;")
+        self.lbl_count.setProperty("variant", "caption")
         bottom.addWidget(self.lbl_count)
         bottom.addStretch()
 
         btn_edit = QPushButton("Edit")
-        btn_edit.setObjectName("SecondaryBtn")
+        btn_edit.setProperty("variant", "secondary")
+        btn_edit.setIcon(theme_manager.icon("edit", size=14))
         btn_edit.clicked.connect(self.edit_invoice)
         bottom.addWidget(btn_edit)
 
         btn_print = QPushButton("Print Selected")
+        btn_print.setProperty("variant", "secondary")
+        btn_print.setIcon(theme_manager.icon("print", size=14))
         btn_print.clicked.connect(self.print_invoice)
         bottom.addWidget(btn_print)
-        
+
         btn_del = QPushButton("Delete Selected")
-        btn_del.setObjectName("DestructiveBtn")
+        btn_del.setProperty("variant", "danger")
+        btn_del.setIcon(theme_manager.icon("delete", color_token="danger", size=14))
         btn_del.clicked.connect(self.delete_invoice)
         bottom.addWidget(btn_del)
-        layout.addLayout(bottom)
 
+        layout.addLayout(bottom)
         self.load_invoices()
 
     def load_invoices(self):
@@ -641,10 +728,14 @@ class InvoiceView(QWidget):
 
         invoices = invoice_service.get_all_invoices(search=search, status=status)
         self.table.setRowCount(len(invoices))
-        mono = QFont("Consolas", 10)
+        mono = theme_manager.font("tabular")
+        mono_bold = theme_manager.font("tabular")
+        mono_bold.setBold(True)
 
         for row, inv in enumerate(invoices):
-            self.table.setItem(row, 0, QTableWidgetItem(inv["invoice_number"]))
+            it_num = QTableWidgetItem(inv["invoice_number"])
+            it_num.setData(Qt.UserRole, inv["id"])
+            self.table.setItem(row, 0, it_num)
 
             d = inv.get("invoice_date", "")
             d_str = d.strftime("%d-%m-%Y") if hasattr(d, 'strftime') else str(d)
@@ -653,25 +744,31 @@ class InvoiceView(QWidget):
             self.table.setItem(row, 1, it_date)
 
             self.table.setItem(row, 2, QTableWidgetItem(inv.get("party_name", "")))
-
-            # PO Number
             self.table.setItem(row, 3, QTableWidgetItem(inv.get("po_number", "") or ""))
-            # PI Number
             self.table.setItem(row, 4, QTableWidgetItem(inv.get("pi_number", "") or ""))
 
-            for col, key in [(5, "subtotal"), (6, "tax_amount"), (7, "total_amount")]:
-                it = QTableWidgetItem(f"₹{inv.get(key, 0):,.2f}")
-                it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                it.setFont(mono)
-                self.table.setItem(row, col, it)
+            # Subtotal
+            it_sub = QTableWidgetItem(f"₹{inv.get('subtotal', 0):,.2f}")
+            it_sub.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            it_sub.setFont(mono)
+            self.table.setItem(row, 5, it_sub)
 
-            status = inv.get("status", "draft")
-            it_st = QTableWidgetItem(status.upper())
-            color_map = {"draft": "#A6822E", "final": "#2F6844", "cancelled": "#8B2635"}
-            it_st.setForeground(QColor(color_map.get(status, "#1B1B18")))
-            self.table.setItem(row, 6, it_st)
+            # Tax
+            it_tax = QTableWidgetItem(f"₹{inv.get('tax_amount', 0):,.2f}")
+            it_tax.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            it_tax.setFont(mono)
+            self.table.setItem(row, 6, it_tax)
 
-            self.table.item(row, 0).setData(Qt.UserRole, inv["id"])
+            # Grand Total
+            it_tot = QTableWidgetItem(f"₹{inv.get('total_amount', 0):,.2f}")
+            it_tot.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            it_tot.setFont(mono_bold)
+            self.table.setItem(row, 7, it_tot)
+
+            # Status pill badge
+            st = inv.get("status", "draft")
+            badge = StatusBadgeLabel(st.capitalize())
+            self.table.setCellWidget(row, 8, badge)
 
         self.lbl_count.setText(f"{len(invoices)} invoices")
 
@@ -682,16 +779,18 @@ class InvoiceView(QWidget):
             try:
                 invoice_service.create_invoice(data["invoice_data"], data["items_data"])
                 self.load_invoices()
-                QMessageBox.information(self, "Success", "Invoice created successfully!")
+                ThemedMessageBox.information(self, "Success", "Invoice created successfully!")
             except Exception as e:
-                QMessageBox.critical(self, "Error", str(e))
+                ThemedMessageBox.critical(self, "Error", str(e))
 
     def edit_invoice(self, index=None):
         row = index.row() if index else self.table.currentRow()
-        if row < 0: return
+        if row < 0:
+            return
         inv_id = self.table.item(row, 0).data(Qt.UserRole)
         inv_data = invoice_service.get_invoice_by_id(inv_id)
-        if not inv_data: return
+        if not inv_data:
+            return
         dlg = InvoiceFormDialog(invoice_data=inv_data, parent=self)
         if dlg.exec() == QDialog.Accepted:
             data = dlg.get_data()
@@ -699,39 +798,37 @@ class InvoiceView(QWidget):
                 invoice_service.update_invoice(inv_id, data["invoice_data"], data["items_data"])
                 self.load_invoices()
             except Exception as e:
-                QMessageBox.critical(self, "Error", str(e))
+                ThemedMessageBox.critical(self, "Error", str(e))
 
     def delete_invoice(self):
         row = self.table.currentRow()
         if row < 0:
-            QMessageBox.information(self, "Info", "Select an invoice to delete.")
+            ThemedMessageBox.information(self, "Info", "Select an invoice to delete.")
             return
         inv_id = self.table.item(row, 0).data(Qt.UserRole)
         inv_num = self.table.item(row, 0).text()
-        reply = QMessageBox.question(self, "Confirm Delete", f"Delete invoice {inv_num}?")
-        if reply == QMessageBox.Yes:
+        reply = ThemedMessageBox.question(self, "Confirm Delete", f"Are you sure you want to delete invoice {inv_num}?")
+        if reply:
             invoice_service.delete_invoice(inv_id)
             self.load_invoices()
 
     def print_invoice(self):
         row = self.table.currentRow()
         if row < 0:
-            QMessageBox.information(self, "Info", "Select an invoice to print.")
+            ThemedMessageBox.information(self, "Info", "Select an invoice to print.")
             return
         inv_id = self.table.item(row, 0).data(Qt.UserRole)
         inv_data = invoice_service.get_invoice_by_id(inv_id)
-        if not inv_data: return
-        
+        if not inv_data:
+            return
+
         try:
             from app.services.billing.invoice_pdf_generator import InvoicePDFGenerator
             from app.database.connection import get_session
             from app.database.models import CompanyProfile
-            import os
-            import subprocess
-            
+
             generator = InvoicePDFGenerator()
-            
-            # Load company profile from database
+
             company_info = {}
             with get_session() as session:
                 comp = session.query(CompanyProfile).first()
@@ -747,12 +844,10 @@ class InvoiceView(QWidget):
                         'account_no': comp.bank_account_no or '',
                         'ifsc': comp.bank_ifsc or '',
                     }
-            
-            # Determine tax mode
+
             is_interstate = inv_data.get('is_interstate', False)
             tax_mode_str = 'inter_state' if is_interstate else 'intra_state'
-            
-            # Map data to generator format
+
             pdf_data = {
                 'invoice_number': inv_data['invoice_number'],
                 'date': inv_data['invoice_date'].strftime('%d-%m-%Y') if hasattr(inv_data['invoice_date'], 'strftime') else str(inv_data['invoice_date']),
@@ -789,19 +884,16 @@ class InvoiceView(QWidget):
                     'grand_total': float(inv_data.get('total_amount', 0)),
                 }
             }
-            
+
             for item in inv_data.get('items', []):
                 qty = float(item.get('quantity', 0))
                 unit_price = float(item.get('unit_price', 0))
                 gst_rate = float(item.get('gst_rate_pct', 0))
-                taxable_value = float(item.get('taxable_value', 0))
-                
-                # Calculate tax amount for this item
                 cgst_amt = float(item.get('cgst_amount', 0))
                 sgst_amt = float(item.get('sgst_amount', 0))
                 igst_amt = float(item.get('igst_amount', 0))
                 item_tax_amount = cgst_amt + sgst_amt + igst_amt
-                
+
                 pdf_data['items'].append({
                     'product_name': item.get('item_description', ''),
                     'description': '',
@@ -812,14 +904,13 @@ class InvoiceView(QWidget):
                     'tax_rate': gst_rate,
                     'tax_amount': item_tax_amount,
                 })
-                
+
             pdf_path = generator.generate_invoice(pdf_data)
-            
+
             if os.name == 'nt':
                 os.startfile(pdf_path)
             else:
                 subprocess.call(('open', pdf_path))
-                
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not generate PDF: {str(e)}")
 
+        except Exception as e:
+            ThemedMessageBox.critical(self, "Error", f"Could not generate PDF: {str(e)}")

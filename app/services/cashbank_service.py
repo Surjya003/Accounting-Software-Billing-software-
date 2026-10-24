@@ -16,8 +16,11 @@ from app.database.models import BankAccount, CashBankTransaction, Party
 def ensure_default_accounts():
     """Creates default Cash-in-Hand account if none exist."""
     with get_session() as session:
-        count = session.query(func.count(BankAccount.id)).scalar() or 0
-        if count == 0:
+        cash = session.query(BankAccount).filter(
+            BankAccount.account_type == "Cash",
+            BankAccount.account_name == "Cash-in-Hand"
+        ).first()
+        if not cash:
             cash = BankAccount(
                 account_name="Cash-in-Hand",
                 account_type="Cash",

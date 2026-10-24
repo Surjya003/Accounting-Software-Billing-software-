@@ -22,6 +22,18 @@ class TestQuotationEngine(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         init_db()
+        from app.database.models import Party, Product, Quotation, CompanyProfile
+        with get_session() as session:
+            comp = session.query(CompanyProfile).first()
+            if comp:
+                comp.state_code = "27"
+            session.query(Party).filter(Party.name.in_([
+                "Quotation Test Customer Ltd", "Delhi Enterprise Solutions"
+            ])).delete(synchronize_session=False)
+            session.query(Product).filter(Product.name.in_([
+                "Industrial Control Panel 100A", "Copper Busbar 50x10mm"
+            ])).delete(synchronize_session=False)
+            session.commit()
         # Create test customer
         cls.customer = create_party({
             "name": "Quotation Test Customer Ltd",

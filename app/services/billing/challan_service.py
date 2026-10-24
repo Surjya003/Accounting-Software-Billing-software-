@@ -46,10 +46,8 @@ def calculate_challan_totals(items_data: List[Dict], company_state_code: str, pa
         qty = Decimal(str(item.get("quantity", "1")))
         rate = Decimal(str(item.get("unit_price", "0")))
         disc = Decimal(str(item.get("discount_pct", "0")))
-        gst_val = item.get("gst_rate_pct")
-        if gst_val is None or str(gst_val).strip() == "":
-            gst_val = item.get("tax_rate", "0")
-        gst = Decimal(str(gst_val))
+        from app.services.validation_helpers import normalize_tax_rate
+        gst = normalize_tax_rate(item)
 
         result = GSTEngine.calculate_line_item(qty, rate, disc, gst, t_type)
 
@@ -83,6 +81,10 @@ def create_challan(data: Dict[str, Any], items_data: List[Dict[str, Any]]) -> De
     if not items_data:
         raise ValueError("Challan must have at least one item.")
     with get_session() as session:
+        try:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        except Exception:
+            pass
         party = session.query(Party).filter(Party.id == data.get("party_id")).first()
         if not party:
             raise ValueError("Party not found.")
@@ -120,6 +122,22 @@ def create_challan(data: Dict[str, Any], items_data: List[Dict[str, Any]]) -> De
             is_interstate=is_inter,
             transport_details=data.get("transport_details", ""),
             notes=data.get("notes", ""),
+            reason_for_transportation=data.get("reason_for_transportation", "Delivery (invoice to follow)"),
+            dispatch_datetime=data.get("dispatch_datetime"),
+            transporter_name=data.get("transporter_name"),
+            transporter_id=data.get("transporter_id"),
+            vehicle_no=str(data["vehicle_no"]).strip().upper() if data.get("vehicle_no") else None,
+            driver_name=data.get("driver_name"),
+            driver_mobile=data.get("driver_mobile"),
+            lr_no=data.get("lr_no"),
+            lr_date=data.get("lr_date"),
+            eway_bill_no=data.get("eway_bill_no"),
+            from_place=data.get("from_place"),
+            to_place=data.get("to_place"),
+            distance_km=Decimal(str(data["distance_km"])) if data.get("distance_km") is not None and str(data["distance_km"]).strip() != "" else None,
+            packages=int(data["packages"]) if data.get("packages") is not None and str(data["packages"]).isdigit() else None,
+            weight=Decimal(str(data["weight"])) if data.get("weight") is not None and str(data["weight"]).strip() != "" else None,
+            show_value=bool(data.get("show_value", False)),
         )
         session.add(challan)
         session.flush()
@@ -133,6 +151,8 @@ def create_challan(data: Dict[str, Any], items_data: List[Dict[str, Any]]) -> De
                 quantity=Decimal(str(it.get("quantity", "1"))),
                 unit=it.get("unit", "PCS"),
                 unit_price=Decimal(str(it.get("unit_price", "0"))),
+                qty_ordered=Decimal(str(it["qty_ordered"])) if it.get("qty_ordered") is not None and str(it["qty_ordered"]).strip() != "" else None,
+                remarks=it.get("remarks", ""),
                 tax_rate=Decimal(str(it.get("tax_rate", "0"))),
                 cgst_amount=it["cgst_amount"],
                 sgst_amount=it["sgst_amount"],
@@ -241,8 +261,15 @@ def update_challan(challan_id: int, ch_data: Dict, items_data: List[Dict] = None
             else:
                 ch.is_interstate = (party_sc.strip() != company_sc.strip()) if party_sc and company_sc else False
 
+        if "vehicle_no" in ch_data and ch_data["vehicle_no"]:
+            ch_data["vehicle_no"] = str(ch_data["vehicle_no"]).strip().upper()
+
         for key in (
             "party_id", "challan_date", "status", "transport_details", "notes",
+            "reason_for_transportation", "dispatch_datetime", "transporter_name",
+            "transporter_id", "vehicle_no", "driver_name", "driver_mobile",
+            "lr_no", "lr_date", "eway_bill_no", "from_place", "to_place",
+            "distance_km", "packages", "weight", "show_value",
         ):
             if key in ch_data and hasattr(ch, key):
                 setattr(ch, key, ch_data[key])
@@ -267,9 +294,26 @@ def get_challan_count() -> int:
 def convert_to_invoice(challan_id: int):
     """Convert a delivery challan into an official Tax Invoice and update stock and ledger."""
     with get_session() as session:
+        try:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        except Exception:
+            pass
         ch = session.query(DeliveryChallan).filter(DeliveryChallan.id == challan_id).first()
         if not ch:
             return None
+        if ch.status == "converted":
+            raise ValueError(f"Delivery Challan #{ch.challan_number} has already been converted.")
+        if ch.status in ("cancelled", "rejected"):
+            raise ValueError(f"Cannot convert {ch.status} Delivery Challan #{ch.challan_number}.")
+
+        # Atomic check-and-set to block concurrent double-conversion
+        rowcount = session.query(DeliveryChallan).filter(
+            DeliveryChallan.id == challan_id,
+            DeliveryChallan.status.notin_(["converted", "cancelled", "rejected"])
+        ).update({"status": "converted"}, synchronize_session=False)
+        if rowcount == 0:
+            raise ValueError(f"Delivery Challan #{ch.challan_number} has already been converted.")
+
         ch_items = session.query(ChallanItem).filter(ChallanItem.challan_id == challan_id).all()
         if not ch_items:
             raise ValueError("Delivery Challan has no items to convert.")
@@ -278,6 +322,7 @@ def convert_to_invoice(challan_id: int):
         company = session.query(CompanyProfile).first()
         c_sc = company.state_code if company and company.state_code else "27"
         p_sc = party.state_code if party and party.state_code else c_sc
+        allow_neg = getattr(company, "allow_negative_stock", False) if company else False
 
         from app.services.billing.invoice_service import generate_invoice_number, calculate_invoice_totals
         from app.database.models import Invoice, InvoiceItem, Product, Voucher
@@ -314,7 +359,15 @@ def convert_to_invoice(challan_id: int):
             status="final",
             notes=f"Converted from Delivery Challan #{ch.challan_number}",
             is_interstate=is_inter,
-            transporter_name=ch.transport_details,
+            delivery_note=ch.challan_number,
+            transporter_name=getattr(ch, "transporter_name", "") or ch.transport_details or "",
+            dispatched_through=getattr(ch, "transporter_name", "") or ch.transport_details or "",
+            vehicle_no=getattr(ch, "vehicle_no", "") or "",
+            lr_no=getattr(ch, "lr_no", "") or "",
+            lr_date=getattr(ch, "lr_date", None),
+            eway_bill_no=getattr(ch, "eway_bill_no", "") or "",
+            destination=getattr(ch, "to_place", "") or "",
+            dispatch_doc_no=getattr(ch, "lr_no", "") or ch.challan_number,
         )
         session.add(invoice)
         session.flush()
@@ -339,7 +392,12 @@ def convert_to_invoice(challan_id: int):
             if it.get("product_id"):
                 prod = session.query(Product).filter(Product.id == it["product_id"]).first()
                 if prod:
-                    prod.stock_quantity = max(Decimal("0.00"), prod.stock_quantity - Decimal(str(it.get("quantity", 0))))
+                    qty = Decimal(str(it.get("quantity", "0")))
+                    if not allow_neg and qty > prod.stock_quantity:
+                        raise ValueError(
+                            f"Insufficient stock for product '{prod.name}'. Available: {prod.stock_quantity}, Requested: {qty}."
+                        )
+                    prod.stock_quantity -= qty
 
         from app.services.billing.invoice_service import post_sales_voucher
         post_sales_voucher(
@@ -348,7 +406,6 @@ def convert_to_invoice(challan_id: int):
             reference_no=ch.challan_number,
             narration=f"Tax Invoice from Delivery Challan #{ch.challan_number}"
         )
-        ch.status = "converted"
         session.flush()
         session.refresh(invoice)
         return invoice

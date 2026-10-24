@@ -27,6 +27,34 @@ from app.config import EXPORTS_DIR, CURRENCY_SYMBOL, DATE_FORMAT, APP_NAME
 from app.database.connection import get_session
 from app.database.models import CompanyProfile
 
+def get_export_accent_hex() -> str:
+    """Returns active theme's brand accent hex (without #) for Excel/PDF exports."""
+    try:
+        from app.ui.theme import theme_manager
+        return theme_manager.get_export_accent().lstrip("#")
+    except Exception:
+        return "0F172A"
+
+def get_pdf_brand_color():
+    """Returns active theme's brand accent as ReportLab HexColor."""
+    try:
+        from app.ui.theme import theme_manager
+        return colors.HexColor(theme_manager.get_export_accent())
+    except Exception:
+        return colors.HexColor("#0284C7")
+
+def get_contrast_text_color(hex_bg: str) -> str:
+    """Returns FFFFFF or 000000 depending on background luminance for Excel cells."""
+    h = hex_bg.lstrip("#")
+    if len(h) != 6:
+        return "FFFFFF"
+    r = int(h[0:2], 16)
+    g = int(h[2:4], 16)
+    b = int(h[4:6], 16)
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    return "000000" if luminance > 0.55 else "FFFFFF"
+
+
 # Number to Indian Words Helper
 ONES = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
         "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"]
@@ -118,15 +146,11 @@ def export_party_ledger_pdf(ledger_data=None, output_path: Optional[Path] = None
     """
     Generates a beautifully styled A4 Party Ledger Statement PDF.
     """
-    if ledger_data is None or isinstance(ledger_data, (int, str)):
+    if ledger_data is None:
+        raise ValueError("Select a party to export")
+    if isinstance(ledger_data, (int, str)):
         from app.services.ledger_service import get_party_ledger_statement
-        if ledger_data is None:
-            from app.database.models import Party
-            with get_session() as session:
-                first_party = session.query(Party).first()
-                p_id = first_party.id if first_party else 1
-        else:
-            p_id = int(ledger_data)
+        p_id = int(ledger_data)
         ledger_data = get_party_ledger_statement(p_id)
     party = ledger_data["party"]
     comp = get_company_dict()
@@ -198,18 +222,13 @@ def export_party_ledger_pdf(ledger_data=None, output_path: Optional[Path] = None
         sub_style
     )
     
-    if logo_path and os.path.exists(logo_path):
-        try:
-            logo_img = RLImage(logo_path, width=50, height=50)
-            header_data = [
-                [logo_img, comp_text, meta_text]
-            ]
-            t_header = Table(header_data, colWidths=[60, 280, 180])
-        except Exception:
-            header_data = [
-                [comp_text, meta_text]
-            ]
-            t_header = Table(header_data, colWidths=[340, 180])
+    from app.services.pdf.core.images import load_logo_image
+    logo_img = load_logo_image(logo_path, max_w=50, max_h=50)
+    if logo_img:
+        header_data = [
+            [logo_img, comp_text, meta_text]
+        ]
+        t_header = Table(header_data, colWidths=[60, 280, 180])
     else:
         header_data = [
             [comp_text, meta_text]
@@ -222,7 +241,7 @@ def export_party_ledger_pdf(ledger_data=None, output_path: Optional[Path] = None
     ]))
     story.append(t_header)
     story.append(Spacer(1, 6))
-    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#0284C7"), spaceAfter=8))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=get_pdf_brand_color(), spaceAfter=8))
     
     # 2. Document Title
     from_d = ledger_data.get("from_date")
@@ -249,10 +268,10 @@ def export_party_ledger_pdf(ledger_data=None, output_path: Optional[Path] = None
         [
             Paragraph(f"<b>Party:</b> {p_name}<br/><b>GSTIN:</b> {p_gst}<br/><b>Phone:</b> {p_phone}<br/><b>Address:</b> {p_addr}", sub_style),
             Paragraph(
-                f"<b>Opening Balance:</b> ₹{op_amt:,.2f} {op_type}<br/>"
-                f"<b>Total Debits (+):</b> ₹{tot_dr:,.2f}<br/>"
-                f"<b>Total Credits (-):</b> ₹{tot_cr:,.2f}<br/>"
-                f"<b>Closing Balance:</b> <font color='#0284C7'><b>₹{cl_amt:,.2f} {cl_type}</b></font>",
+                f"<b>Opening Balance:</b> Rs. {op_amt:,.2f} {op_type}<br/>"
+                f"<b>Total Debits (+):</b> Rs. {tot_dr:,.2f}<br/>"
+                f"<b>Total Credits (-):</b> Rs. {tot_cr:,.2f}<br/>"
+                f"<b>Closing Balance:</b> <font color='#0284C7'><b>Rs. {cl_amt:,.2f} {cl_type}</b></font>",
                 sub_style
             )
         ]
@@ -278,9 +297,9 @@ def export_party_ledger_pdf(ledger_data=None, output_path: Optional[Path] = None
             Paragraph("<b>Product</b>", cell_style),
             Paragraph("<b>Vch / Ref No.</b>", cell_style),
             Paragraph("<b>Particulars / Narration</b>", cell_style),
-            Paragraph("<b>Debit (₹)</b>", cell_right),
-            Paragraph("<b>Credit (₹)</b>", cell_right),
-            Paragraph("<b>Balance (₹)</b>", cell_right)
+            Paragraph("<b>Debit (Rs.)</b>", cell_right),
+            Paragraph("<b>Credit (Rs.)</b>", cell_right),
+            Paragraph("<b>Balance (Rs.)</b>", cell_right)
         ]
     ]
     
@@ -323,10 +342,10 @@ def export_party_ledger_pdf(ledger_data=None, output_path: Optional[Path] = None
         Paragraph("<b>TOTALS</b>", cell_style),
         Paragraph("", cell_style),
         Paragraph("", cell_style),
-        Paragraph(f"<b>Closing Bal: ₹{cl_amt:,.2f} {cl_type}</b>", cell_style),
-        Paragraph(f"<b>₹{tot_dr:,.2f}</b>", cell_bold_right),
-        Paragraph(f"<b>₹{tot_cr:,.2f}</b>", cell_bold_right),
-        Paragraph(f"<b>₹{cl_amt:,.2f} {cl_type}</b>", cell_bold_right)
+        Paragraph(f"<b>Closing Bal: Rs. {cl_amt:,.2f} {cl_type}</b>", cell_style),
+        Paragraph(f"<b>Rs. {tot_dr:,.2f}</b>", cell_bold_right),
+        Paragraph(f"<b>Rs. {tot_cr:,.2f}</b>", cell_bold_right),
+        Paragraph(f"<b>Rs. {cl_amt:,.2f} {cl_type}</b>", cell_bold_right)
     ])
     
     col_widths = [50, 45, 65, 80, 90, 55, 55, 65]
@@ -364,180 +383,96 @@ def export_party_ledger_pdf(ledger_data=None, output_path: Optional[Path] = None
 
 def export_invoice_pdf(voucher_dict: Dict[str, Any], output_path: Optional[Path] = None) -> Path:
     """
-    Generates a full GST Tax Invoice / Bill PDF for Sales/Purchases.
+    Generates a full GST Tax Invoice / Bill / Receipt PDF using dedicated templates.
     """
+    from app.services.pdf.templates.tax_invoice import render_tax_invoice_pdf
+    from app.services.pdf.templates.credit_note import render_credit_note_pdf
+    from app.services.pdf.templates.debit_note import render_debit_note_pdf
+    from app.services.pdf.templates.payment_receipt import render_payment_receipt_pdf
+
     comp = get_company_dict()
     v_num = voucher_dict.get("voucher_number", "INV-001")
-    
+    vt = voucher_dict.get("voucher_type", "Sales")
+
     if output_path is None:
         filename = f"Invoice_{v_num.replace('/', '_')}.pdf"
         output_path = EXPORTS_DIR / filename
-        
-    doc = SimpleDocTemplate(
-        str(output_path),
-        pagesize=A4,
-        leftMargin=36,
-        rightMargin=36,
-        topMargin=36,
-        bottomMargin=45
-    )
-    
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('T1', fontName='Helvetica-Bold', fontSize=14, leading=16, textColor=colors.HexColor('#0F172A'))
-    sub_style = ParagraphStyle('S1', fontName='Helvetica', fontSize=8.5, leading=11, textColor=colors.HexColor('#475569'))
-    cell_style = ParagraphStyle('C1', fontName='Helvetica', fontSize=8, leading=10, textColor=colors.HexColor('#1E293B'))
-    cell_right = ParagraphStyle('CR', parent=cell_style, alignment=2)
-    cell_bold_right = ParagraphStyle('CBR', parent=cell_style, fontName='Helvetica-Bold', alignment=2)
+    output_path = Path(output_path)
 
-    story = []
-    
-    # 1. Header
-    comp_name = comp.get("name", "Vyapar Traders")
-    logo_path = comp.get("logo_path")
-    
-    comp_info_text = Paragraph(
-        f"<b>{comp_name}</b><br/>{comp.get('address','')}<br/>GSTIN: {comp.get('gstin','')}<br/>Phone: {comp.get('phone','')}",
-        sub_style
+    is_interstate = (
+        float(voucher_dict.get("igst_amount", 0.0)) > 0.0
+        or voucher_dict.get("is_interstate", False)
     )
-    inv_meta_text = Paragraph(
-        f"<font size=13><b>TAX INVOICE</b></font><br/><b>Invoice No:</b> {v_num}<br/><b>Date:</b> {voucher_dict.get('voucher_date','')}<br/><b>Ref No:</b> {voucher_dict.get('reference_no','')}",
-        ParagraphStyle('InvMeta', alignment=2, fontSize=8.5, leading=12)
-    )
-    
-    if logo_path and os.path.exists(logo_path):
-        try:
-            logo_img = RLImage(logo_path, width=50, height=50)
-            header_data = [
-                [logo_img, comp_info_text, inv_meta_text]
-            ]
-            t_head = Table(header_data, colWidths=[60, 250, 210])
-        except Exception:
-            header_data = [
-                [comp_info_text, inv_meta_text]
-            ]
-            t_head = Table(header_data, colWidths=[300, 220])
-    else:
-        header_data = [
-            [comp_info_text, inv_meta_text]
-        ]
-        t_head = Table(header_data, colWidths=[300, 220])
-        
-    t_head.setStyle(TableStyle([
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-    ]))
-    story.append(t_head)
-    story.append(Spacer(1, 6))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#CBD5E1"), spaceAfter=6))
-    
-    # 2. Bill To
-    p_name = voucher_dict.get("party_name", "")
-    p_phone = voucher_dict.get("party_phone", "")
-    p_gst = voucher_dict.get("party_gstin", "Unregistered")
-    p_addr = voucher_dict.get("party_address", "")
-    
-    bill_to_data = [
-        [
-            Paragraph(f"<b>BILL TO / CUSTOMER:</b><br/><b>{p_name}</b><br/>{p_addr}<br/><b>GSTIN:</b> {p_gst} | <b>Phone:</b> {p_phone}", sub_style),
-            Paragraph(f"<b>BANK DETAILS:</b><br/>Bank: {comp.get('bank_name','')}<br/>A/C No: {comp.get('bank_account_no','')}<br/>IFSC: {comp.get('bank_ifsc','')}<br/>UPI ID: {comp.get('upi_id','')}", sub_style)
-        ]
-    ]
-    t_bto = Table(bill_to_data, colWidths=[280, 240])
-    t_bto.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")),
-        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
-        ('TOPPADDING', (0,0), (-1,-1), 6),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-        ('LEFTPADDING', (0,0), (-1,-1), 6),
-        ('RIGHTPADDING', (0,0), (-1,-1), 6),
-    ]))
-    story.append(t_bto)
-    story.append(Spacer(1, 8))
-    
-    # 3. Item Table
-    item_rows = [
-        [
-            Paragraph("<b>#</b>", cell_style),
-            Paragraph("<b>Item Description</b>", cell_style),
-            Paragraph("<b>HSN</b>", cell_style),
-            Paragraph("<b>Qty</b>", cell_right),
-            Paragraph("<b>Rate (₹)</b>", cell_right),
-            Paragraph("<b>Taxable (₹)</b>", cell_right),
-            Paragraph("<b>GST %</b>", cell_right),
-            Paragraph("<b>Total (₹)</b>", cell_right)
-        ]
-    ]
-    
+
     items = voucher_dict.get("items", [])
+    mapped_items = []
     if not items:
-        # Simple voucher without line items
-        item_rows.append([
-            Paragraph("1", cell_style),
-            Paragraph(voucher_dict.get("narration") or "Trading Goods / Material", cell_style),
-            Paragraph("-", cell_style),
-            Paragraph("1.00", cell_right),
-            Paragraph(f"{voucher_dict.get('amount_untaxed', 0):,.2f}", cell_right),
-            Paragraph(f"{voucher_dict.get('amount_untaxed', 0):,.2f}", cell_right),
-            Paragraph("-", cell_right),
-            Paragraph(f"{voucher_dict.get('total_amount', 0):,.2f}", cell_right)
-        ])
+        narration = voucher_dict.get("narration") or "Trading Goods / Material"
+        untaxed = float(voucher_dict.get("amount_untaxed") or voucher_dict.get("total_amount") or 0.0)
+        tot = float(voucher_dict.get("total_amount") or 0.0)
+        mapped_items.append({
+            "item_description": narration,
+            "hsn_code": "-",
+            "quantity": 1.0,
+            "unit": "PCS",
+            "unit_price": untaxed,
+            "tax_rate": 0.0,
+            "total_item_amount": tot,
+            "reference_no": voucher_dict.get("reference_no", "-")
+        })
     else:
-        for idx, it in enumerate(items, start=1):
-            item_rows.append([
-                Paragraph(str(idx), cell_style),
-                Paragraph(it.get("item_description", ""), cell_style),
-                Paragraph(it.get("hsn_sac_code", "-"), cell_style),
-                Paragraph(f"{it.get('quantity', 1):,.2f} {it.get('unit','PCS')}", cell_right),
-                Paragraph(f"{it.get('unit_price', 0):,.2f}", cell_right),
-                Paragraph(f"{it.get('taxable_value', 0):,.2f}", cell_right),
-                Paragraph(f"{it.get('gst_rate_pct', 0)}%", cell_right),
-                Paragraph(f"{it.get('total_item_amount', 0):,.2f}", cell_right)
-            ])
-            
-    t_items = Table(item_rows, colWidths=[20, 160, 50, 55, 60, 65, 45, 65])
-    t_items.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#0F172A")),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('TOPPADDING', (0,0), (-1,-1), 4),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-    ]))
-    story.append(t_items)
-    story.append(Spacer(1, 6))
-    
-    # 4. Summary Totals
-    taxable_val = voucher_dict.get("amount_untaxed", 0.0)
-    cgst_val = voucher_dict.get("cgst_amount", 0.0)
-    sgst_val = voucher_dict.get("sgst_amount", 0.0)
-    igst_val = voucher_dict.get("igst_amount", 0.0)
-    tot_val = voucher_dict.get("total_amount", 0.0)
-    
-    totals_data = [
-        [Paragraph(f"<b>Amount in Words:</b><br/>{num_to_words_inr(tot_val)}", sub_style), Paragraph("<b>Taxable Value:</b>", cell_right), Paragraph(f"₹{taxable_val:,.2f}", cell_bold_right)],
-        ["", Paragraph("<b>CGST:</b>", cell_right), Paragraph(f"₹{cgst_val:,.2f}", cell_right)],
-        ["", Paragraph("<b>SGST:</b>", cell_right), Paragraph(f"₹{sgst_val:,.2f}", cell_right)],
-        ["", Paragraph("<b>IGST:</b>", cell_right), Paragraph(f"₹{igst_val:,.2f}", cell_right)],
-        ["", Paragraph("<b>Grand Total:</b>", cell_right), Paragraph(f"<b>₹{tot_val:,.2f}</b>", cell_bold_right)]
-    ]
-    t_tot = Table(totals_data, colWidths=[310, 110, 100])
-    t_tot.setStyle(TableStyle([
-        ('VALIGN', (0,0), (-1,-1), 'TOP'),
-        ('LINEABOVE', (1,-1), (2,-1), 1, colors.HexColor("#0F172A")),
-    ]))
-    story.append(t_tot)
-    story.append(Spacer(1, 15))
-    
-    # 5. Terms & Signatory
-    terms = comp.get("terms_conditions", "1. Goods once sold will not be returned.\n2. Subject to local jurisdiction.")
-    sig_block = [
-        [
-            Paragraph(f"<b>Terms & Conditions:</b><br/>{terms.replace(chr(10), '<br/>')}", sub_style),
-            Paragraph(f"For <b>{comp_name}</b><br/><br/><br/><br/><b>Authorised Signatory</b>", ParagraphStyle('SigInv', alignment=2, fontSize=8.5))
-        ]
-    ]
-    t_sig = Table(sig_block, colWidths=[320, 200])
-    story.append(KeepTogether(t_sig))
-    
-    doc.build(story, canvasmaker=NumberedCanvas)
+        for it in items:
+            desc = it.get("item_description") or it.get("product_name") or "Item"
+            qty = float(it.get("quantity", 1))
+            rate = float(it.get("unit_price", 0))
+            gst_pct = float(it.get("gst_rate_pct", 0))
+            tot_amt = float(it.get("total_item_amount", (qty * rate) + float(it.get("tax_amount", 0))))
+            mapped_items.append({
+                "item_description": desc,
+                "hsn_code": it.get("hsn_sac_code") or it.get("hsn_code", "-"),
+                "quantity": qty,
+                "unit": it.get("unit", "PCS"),
+                "unit_price": rate,
+                "tax_rate": gst_pct,
+                "total_item_amount": tot_amt,
+                "reference_no": voucher_dict.get("reference_no", "-")
+            })
+
+    doc_data = {
+        "invoice_number": v_num,
+        "date": str(voucher_dict.get("voucher_date", "")),
+        "reference_number": voucher_dict.get("reference_no", ""),
+        "company": comp,
+        "customer": {
+            "name": voucher_dict.get("party_name", ""),
+            "address": voucher_dict.get("party_address", ""),
+            "gstin": voucher_dict.get("party_gstin", "Unregistered"),
+            "phone": voucher_dict.get("party_phone", ""),
+        },
+        "items": mapped_items,
+        "totals": {
+            "taxable_amount": float(voucher_dict.get("amount_untaxed", 0.0)),
+            "cgst_amount": float(voucher_dict.get("cgst_amount", 0.0)),
+            "sgst_amount": float(voucher_dict.get("sgst_amount", 0.0)),
+            "igst_amount": float(voucher_dict.get("igst_amount", 0.0)),
+            "grand_total": float(voucher_dict.get("total_amount", 0.0)),
+        },
+        "tax_mode": "inter_state" if is_interstate else "intra_state",
+        "voucher_type": vt,
+        "payment_mode": voucher_dict.get("payment_mode", ""),
+        "amount": float(voucher_dict.get("total_amount", 0.0)),
+    }
+
+    vt_lower = str(vt).lower()
+    if vt_lower in ("credit", "sales return", "credit note"):
+        render_credit_note_pdf(doc_data, str(output_path))
+    elif vt_lower in ("debit", "purchase return", "debit note"):
+        render_debit_note_pdf(doc_data, str(output_path))
+    elif vt_lower in ("payment", "receipt", "contra", "journal"):
+        render_payment_receipt_pdf(doc_data, str(output_path))
+    else:
+        render_tax_invoice_pdf(doc_data, str(output_path))
+
     return output_path
 
 
@@ -590,14 +525,11 @@ def export_outstanding_pdf(report_data=None, output_path: Optional[Path] = None)
         sub_style
     )
     
-    if logo_path and os.path.exists(logo_path):
-        try:
-            logo_img = RLImage(logo_path, width=50, height=50)
-            header_data = [[logo_img, comp_text, meta_text]]
-            t_header = Table(header_data, colWidths=[60, 400, 280])
-        except Exception:
-            header_data = [[comp_text, meta_text]]
-            t_header = Table(header_data, colWidths=[460, 280])
+    from app.services.pdf.core.images import load_logo_image
+    logo_img = load_logo_image(logo_path, max_w=50, max_h=50)
+    if logo_img:
+        header_data = [[logo_img, comp_text, meta_text]]
+        t_header = Table(header_data, colWidths=[60, 400, 280])
     else:
         header_data = [[comp_text, meta_text]]
         t_header = Table(header_data, colWidths=[460, 280])
@@ -623,11 +555,11 @@ def export_outstanding_pdf(report_data=None, output_path: Optional[Path] = None)
             Paragraph("<b>Party Name</b>", cell_style),
             Paragraph("<b>City</b>", cell_style),
             Paragraph("<b>Phone</b>", cell_style),
-            Paragraph("<b>0-30 Days (₹)</b>", cell_right),
-            Paragraph("<b>31-60 Days (₹)</b>", cell_right),
-            Paragraph("<b>61-90 Days (₹)</b>", cell_right),
-            Paragraph("<b>90+ Days (₹)</b>", cell_right),
-            Paragraph("<b>Total Due (₹)</b>", cell_bold_right),
+            Paragraph("<b>0-30 Days (Rs.)</b>", cell_right),
+            Paragraph("<b>31-60 Days (Rs.)</b>", cell_right),
+            Paragraph("<b>61-90 Days (Rs.)</b>", cell_right),
+            Paragraph("<b>90+ Days (Rs.)</b>", cell_right),
+            Paragraph("<b>Total Due (Rs.)</b>", cell_bold_right),
         ]
     ]
     
@@ -652,7 +584,7 @@ def export_outstanding_pdf(report_data=None, output_path: Optional[Path] = None)
         Paragraph(f"<b>{report_data.get('total_31_60', 0):,.2f}</b>", cell_bold_right),
         Paragraph(f"<b>{report_data.get('total_61_90', 0):,.2f}</b>", cell_bold_right),
         Paragraph(f"<b>{report_data.get('total_90_plus', 0):,.2f}</b>", cell_bold_right),
-        Paragraph(f"<b>₹{report_data.get('grand_total', 0):,.2f}</b>", cell_bold_right),
+        Paragraph(f"<b>Rs. {report_data.get('grand_total', 0):,.2f}</b>", cell_bold_right),
     ])
     
     col_widths = [180, 70, 80, 80, 80, 80, 80, 90]
@@ -713,8 +645,8 @@ def export_daybook_pdf(daybook_data=None, output_path: Optional[Path] = None) ->
         Paragraph("<b>Voucher No.</b>", cell_style),
         Paragraph("<b>Party Name</b>", cell_style),
         Paragraph("<b>Ref No.</b>", cell_style),
-        Paragraph("<b>Debit (₹)</b>", cell_right),
-        Paragraph("<b>Credit (₹)</b>", cell_right)
+        Paragraph("<b>Debit (Rs.)</b>", cell_right),
+        Paragraph("<b>Credit (Rs.)</b>", cell_right)
     ]]
     for r in daybook_data.get("rows", []):
         d_str = r["voucher_date"].strftime("%d-%m-%Y") if isinstance(r["voucher_date"], (date, datetime)) else str(r["voucher_date"])
@@ -738,6 +670,8 @@ def export_daybook_pdf(daybook_data=None, output_path: Optional[Path] = None) ->
     story.append(t)
     doc.build(story, canvasmaker=NumberedCanvas)
     return output_path
+
+export_day_book_pdf = export_daybook_pdf
 
 
 def export_trial_balance_pdf(tb_data=None, output_path: Optional[Path] = None) -> Path:
@@ -763,12 +697,12 @@ def export_trial_balance_pdf(tb_data=None, output_path: Optional[Path] = None) -
     table_data = [[
         Paragraph("<b>Party Name</b>", cell_style),
         Paragraph("<b>Type</b>", cell_style),
-        Paragraph("<b>Op Dr (₹)</b>", cell_right),
-        Paragraph("<b>Op Cr (₹)</b>", cell_right),
-        Paragraph("<b>Period Dr (₹)</b>", cell_right),
-        Paragraph("<b>Period Cr (₹)</b>", cell_right),
-        Paragraph("<b>Closing Dr (₹)</b>", cell_right),
-        Paragraph("<b>Closing Cr (₹)</b>", cell_right)
+        Paragraph("<b>Op Dr (Rs.)</b>", cell_right),
+        Paragraph("<b>Op Cr (Rs.)</b>", cell_right),
+        Paragraph("<b>Period Dr (Rs.)</b>", cell_right),
+        Paragraph("<b>Period Cr (Rs.)</b>", cell_right),
+        Paragraph("<b>Closing Dr (Rs.)</b>", cell_right),
+        Paragraph("<b>Closing Cr (Rs.)</b>", cell_right)
     ]]
     for r in tb_data.get("rows", []):
         table_data.append([
@@ -799,11 +733,13 @@ def export_trial_balance_pdf(tb_data=None, output_path: Optional[Path] = None) -
 # ============================================================================
 
 def style_excel_header(ws, col_count: int, title: str, subtitle: str = ""):
-    """Applies clean executive header to Excel sheet."""
+    """Applies clean executive header to Excel sheet matching active theme accent."""
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=col_count)
     cell = ws.cell(row=1, column=1, value=title)
-    cell.font = Font(name="Calibri", size=14, bold=True, color="FFFFFF")
-    cell.fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+    accent_hex = get_export_accent_hex()
+    text_color = get_contrast_text_color(accent_hex)
+    cell.font = Font(name="Calibri", size=14, bold=True, color=text_color)
+    cell.fill = PatternFill(start_color=accent_hex, end_color=accent_hex, fill_type="solid")
     cell.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 28
     
@@ -813,6 +749,26 @@ def style_excel_header(ws, col_count: int, title: str, subtitle: str = ""):
         cell2.font = Font(name="Calibri", size=10, italic=True, color="475569")
         cell2.alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[2].height = 18
+
+def sanitize_excel_cell(val: Any) -> Any:
+    """
+    Prevents CSV / Excel Formula Injection (CSV Injection / CWE-1236).
+    If a text cell begins with =, +, -, @, prefix it with a single quote.
+    """
+    if isinstance(val, str) and val and val[0] in ('=', '+', '-', '@'):
+        return f"'{val}"
+    return val
+
+def setup_excel_print_and_freeze(ws, freeze_cell: str, title_rows: str, landscape: bool = True):
+    """
+    Sets frozen header panes, print title rows, and page setup (A4 landscape) on Excel worksheet.
+    """
+    ws.freeze_panes = freeze_cell
+    ws.print_title_rows = title_rows
+    if landscape:
+        ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
 
 def autofit_excel_columns(ws):
     """Auto-adjusts column widths with safe padding."""
@@ -829,15 +785,11 @@ def autofit_excel_columns(ws):
 
 def export_party_ledger_excel(ledger_data=None, output_path: Optional[Path] = None) -> Path:
     """Exports full Party Ledger to styled Excel workbook."""
-    if ledger_data is None or isinstance(ledger_data, (int, str)):
+    if ledger_data is None:
+        raise ValueError("Select a party to export")
+    if isinstance(ledger_data, (int, str)):
         from app.services.ledger_service import get_party_ledger_statement
-        if ledger_data is None:
-            from app.database.models import Party
-            with get_session() as session:
-                first_party = session.query(Party).first()
-                p_id = first_party.id if first_party else 1
-        else:
-            p_id = int(ledger_data)
+        p_id = int(ledger_data)
         ledger_data = get_party_ledger_statement(p_id)
     party = ledger_data["party"]
     if output_path is None:
@@ -859,7 +811,7 @@ def export_party_ledger_excel(ledger_data=None, output_path: Optional[Path] = No
     ws.cell(row=3, column=5, value=f"Phone: {party.get('phone','') or 'N/A'}").font = Font(bold=True)
     
     # Table headers
-    headers = ["Date", "Type", "Product", "Voucher No.", "Particulars / Narration", "Debit (₹)", "Credit (₹)", "Balance (₹)"]
+    headers = ["Date", "Type", "Product", "Voucher No.", "Particulars / Narration", "Debit (Rs.)", "Credit (Rs.)", "Balance (Rs.)"]
     header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
     thin_border = Border(
         left=Side(style='thin', color='CBD5E1'),
@@ -873,7 +825,7 @@ def export_party_ledger_excel(ledger_data=None, output_path: Optional[Path] = No
         c = ws.cell(row=row_num, column=col_num, value=h)
         c.font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
         c.fill = header_fill
-        c.alignment = Alignment(horizontal="right" if "₹" in h else "left", vertical="center")
+        c.alignment = Alignment(horizontal="right" if "Rs" in h else "left", vertical="center")
         c.border = thin_border
     ws.row_dimensions[row_num].height = 20
     
@@ -905,10 +857,10 @@ def export_party_ledger_excel(ledger_data=None, output_path: Optional[Path] = No
         row_num += 1
         d_str = row["voucher_date"].strftime("%d-%m-%Y") if isinstance(row["voucher_date"], (date, datetime)) else str(row["voucher_date"])
         ws.cell(row=row_num, column=1, value=d_str).border = thin_border
-        ws.cell(row=row_num, column=2, value=row["voucher_type"]).border = thin_border
-        ws.cell(row=row_num, column=3, value=row.get("product", "") or "-").border = thin_border
-        ws.cell(row=row_num, column=4, value=row["voucher_number"]).border = thin_border
-        ws.cell(row=row_num, column=5, value=row["narration"]).border = thin_border
+        ws.cell(row=row_num, column=2, value=sanitize_excel_cell(row["voucher_type"])).border = thin_border
+        ws.cell(row=row_num, column=3, value=sanitize_excel_cell(row.get("product", "") or "-")).border = thin_border
+        ws.cell(row=row_num, column=4, value=sanitize_excel_cell(row["voucher_number"])).border = thin_border
+        ws.cell(row=row_num, column=5, value=sanitize_excel_cell(row["narration"])).border = thin_border
         
         c_d = ws.cell(row=row_num, column=6, value=row["debit"])
         c_d.number_format = '#,##0.00'
@@ -928,7 +880,7 @@ def export_party_ledger_excel(ledger_data=None, output_path: Optional[Path] = No
     ws.cell(row=row_num, column=2, value="TOTALS").font = Font(bold=True)
     ws.cell(row=row_num, column=3, value="").border = thin_border
     ws.cell(row=row_num, column=4, value="").border = thin_border
-    ws.cell(row=row_num, column=5, value=f"Closing: ₹{ledger_data['closing_balance']['amount']:,.2f} {ledger_data['closing_balance']['type']}").font = Font(bold=True)
+    ws.cell(row=row_num, column=5, value=f"Closing: Rs. {ledger_data['closing_balance']['amount']:,.2f} {ledger_data['closing_balance']['type']}").font = Font(bold=True)
     
     t_dr = ws.cell(row=row_num, column=6, value=ledger_data["total_debit"])
     t_dr.font = Font(bold=True)
@@ -945,6 +897,7 @@ def export_party_ledger_excel(ledger_data=None, output_path: Optional[Path] = No
     t_cl.alignment = Alignment(horizontal="right")
     t_cl.border = thin_border
     
+    setup_excel_print_and_freeze(ws, freeze_cell="A6", title_rows="5:5", landscape=True)
     autofit_excel_columns(ws)
     wb.save(str(output_path))
     return output_path
@@ -966,7 +919,7 @@ def export_outstanding_excel(report_data=None, output_path: Optional[Path] = Non
     
     style_excel_header(ws, 8, f"PARTY OUTSTANDING & AGEING REPORT - {rep_type.upper()}", f"As of {report_data.get('as_of_date')}")
     
-    headers = ["Party Code", "Party Name", "City", "Phone", "0-30 Days (₹)", "31-60 Days (₹)", "61-90 Days (₹)", "90+ Days (₹)", "Total Due (₹)"]
+    headers = ["Party Code", "Party Name", "City", "Phone", "0-30 Days (Rs.)", "31-60 Days (Rs.)", "61-90 Days (Rs.)", "90+ Days (Rs.)", "Total Due (Rs.)"]
     header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
     thin_border = Border(left=Side(style='thin', color='CBD5E1'), right=Side(style='thin', color='CBD5E1'), top=Side(style='thin', color='CBD5E1'), bottom=Side(style='thin', color='CBD5E1'))
     
@@ -976,14 +929,14 @@ def export_outstanding_excel(report_data=None, output_path: Optional[Path] = Non
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = header_fill
         c.border = thin_border
-        c.alignment = Alignment(horizontal="right" if "₹" in h else "left")
+        c.alignment = Alignment(horizontal="right" if "Rs" in h else "left")
         
     for p in report_data["party_rows"]:
         row_num += 1
-        ws.cell(row=row_num, column=1, value=p["party_code"]).border = thin_border
-        ws.cell(row=row_num, column=2, value=p["party_name"]).border = thin_border
-        ws.cell(row=row_num, column=3, value=p["city"]).border = thin_border
-        ws.cell(row=row_num, column=4, value=p["phone"]).border = thin_border
+        ws.cell(row=row_num, column=1, value=sanitize_excel_cell(p["party_code"])).border = thin_border
+        ws.cell(row=row_num, column=2, value=sanitize_excel_cell(p["party_name"])).border = thin_border
+        ws.cell(row=row_num, column=3, value=sanitize_excel_cell(p["city"])).border = thin_border
+        ws.cell(row=row_num, column=4, value=sanitize_excel_cell(p["phone"])).border = thin_border
         
         for idx, col_val in enumerate([p["bucket_0_30"], p["bucket_31_60"], p["bucket_61_90"], p["bucket_90_plus"], p["total_outstanding"]], start=5):
             c_num = ws.cell(row=row_num, column=idx, value=col_val)
@@ -1005,6 +958,7 @@ def export_outstanding_excel(report_data=None, output_path: Optional[Path] = Non
         c_tot.number_format = '#,##0.00'
         c_tot.border = thin_border
         
+    setup_excel_print_and_freeze(ws, freeze_cell="A5", title_rows="4:4", landscape=True)
     autofit_excel_columns(ws)
     wb.save(str(output_path))
     return output_path
@@ -1025,7 +979,7 @@ def export_daybook_excel(daybook_data=None, output_path: Optional[Path] = None) 
     
     style_excel_header(ws, 8, "TRANSACTION DAY BOOK", f"Period: {daybook_data['from_date']} to {daybook_data['to_date']}")
     
-    headers = ["Date", "Type", "Voucher No.", "Party Name", "Ref No.", "Payment Mode", "Debit (₹)", "Credit (₹)"]
+    headers = ["Date", "Type", "Voucher No.", "Party Name", "Ref No.", "Payment Mode", "Debit (Rs.)", "Credit (Rs.)"]
     header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
     thin_border = Border(left=Side(style='thin', color='CBD5E1'), right=Side(style='thin', color='CBD5E1'), top=Side(style='thin', color='CBD5E1'), bottom=Side(style='thin', color='CBD5E1'))
     
@@ -1035,17 +989,17 @@ def export_daybook_excel(daybook_data=None, output_path: Optional[Path] = None) 
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = header_fill
         c.border = thin_border
-        c.alignment = Alignment(horizontal="right" if "₹" in h else "left")
+        c.alignment = Alignment(horizontal="right" if "Rs" in h else "left")
         
     for r in daybook_data["rows"]:
         row_num += 1
         d_str = r["voucher_date"].strftime("%d-%m-%Y") if isinstance(r["voucher_date"], (date, datetime)) else str(r["voucher_date"])
         ws.cell(row=row_num, column=1, value=d_str).border = thin_border
-        ws.cell(row=row_num, column=2, value=r["voucher_type"]).border = thin_border
-        ws.cell(row=row_num, column=3, value=r["voucher_number"]).border = thin_border
-        ws.cell(row=row_num, column=4, value=r["party_name"]).border = thin_border
-        ws.cell(row=row_num, column=5, value=r["reference_no"]).border = thin_border
-        ws.cell(row=row_num, column=6, value=r["payment_mode"]).border = thin_border
+        ws.cell(row=row_num, column=2, value=sanitize_excel_cell(r["voucher_type"])).border = thin_border
+        ws.cell(row=row_num, column=3, value=sanitize_excel_cell(r["voucher_number"])).border = thin_border
+        ws.cell(row=row_num, column=4, value=sanitize_excel_cell(r["party_name"])).border = thin_border
+        ws.cell(row=row_num, column=5, value=sanitize_excel_cell(r["reference_no"])).border = thin_border
+        ws.cell(row=row_num, column=6, value=sanitize_excel_cell(r["payment_mode"])).border = thin_border
         
         c_dr = ws.cell(row=row_num, column=7, value=r["debit"])
         c_dr.number_format = '#,##0.00'
@@ -1074,6 +1028,7 @@ def export_daybook_excel(daybook_data=None, output_path: Optional[Path] = None) 
     t_cr.number_format = '#,##0.00'
     t_cr.border = thin_border
     
+    setup_excel_print_and_freeze(ws, freeze_cell="A5", title_rows="4:4", landscape=True)
     autofit_excel_columns(ws)
     wb.save(str(output_path))
     return output_path
@@ -1094,7 +1049,7 @@ def export_trial_balance_excel(tb_data=None, output_path: Optional[Path] = None)
     
     style_excel_header(ws, 8, "TRIAL BALANCE SHEET", f"As of {tb_data.get('to_date')}")
     
-    headers = ["Party Name", "Type", "Op Dr (₹)", "Op Cr (₹)", "Period Dr (₹)", "Period Cr (₹)", "Closing Dr (₹)", "Closing Cr (₹)"]
+    headers = ["Party Name", "Type", "Op Dr (Rs.)", "Op Cr (Rs.)", "Period Dr (Rs.)", "Period Cr (Rs.)", "Closing Dr (Rs.)", "Closing Cr (Rs.)"]
     header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
     thin_border = Border(left=Side(style='thin', color='CBD5E1'), right=Side(style='thin', color='CBD5E1'), top=Side(style='thin', color='CBD5E1'), bottom=Side(style='thin', color='CBD5E1'))
     
@@ -1104,12 +1059,12 @@ def export_trial_balance_excel(tb_data=None, output_path: Optional[Path] = None)
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = header_fill
         c.border = thin_border
-        c.alignment = Alignment(horizontal="right" if "₹" in h else "left")
+        c.alignment = Alignment(horizontal="right" if "Rs" in h else "left")
         
     for r in tb_data["rows"]:
         row_num += 1
-        ws.cell(row=row_num, column=1, value=r["party_name"]).border = thin_border
-        ws.cell(row=row_num, column=2, value=r["party_type"]).border = thin_border
+        ws.cell(row=row_num, column=1, value=sanitize_excel_cell(r["party_name"])).border = thin_border
+        ws.cell(row=row_num, column=2, value=sanitize_excel_cell(r["party_type"])).border = thin_border
         
         for idx, key in enumerate(["op_dr", "op_cr", "period_dr", "period_cr", "cl_dr", "cl_cr"], start=3):
             c_val = ws.cell(row=row_num, column=idx, value=r[key])
@@ -1127,6 +1082,7 @@ def export_trial_balance_excel(tb_data=None, output_path: Optional[Path] = None)
         c_tot.number_format = '#,##0.00'
         c_tot.border = thin_border
         
+    setup_excel_print_and_freeze(ws, freeze_cell="A5", title_rows="4:4", landscape=True)
     autofit_excel_columns(ws)
     wb.save(str(output_path))
     return output_path

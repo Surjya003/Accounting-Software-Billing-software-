@@ -39,7 +39,7 @@ Traditional business software in India often forces a compromise between lightwe
 * **GST-Compliant Commercial Billing**: Automated splitting of Intra-state (CGST + SGST) vs Inter-state (IGST) taxes across all standard GST slabs (0%, 5%, 12%, 18%, 28%).
 * **Real-time Inventory Tracking**: Accurate warehouse management supporting partial purchase order receipts, sales return restorations, and low-stock triggers.
 * **Executive Document Engine**: Vector PDF creation via **ReportLab** and formatted spreadsheet creation via **openpyxl** for Chartered Accountants.
-* **Zero-Cloud Dependency & Hardware Locking**: Fully functional offline operation with encrypted local SQLite storage and tamper-proof HMAC-SHA256 hardware licensing.
+* **Zero-Cloud Dependency & Hardware Locking**: Fully functional offline operation with local SQLite storage and tamper-proof HMAC-SHA256 hardware licensing with anti-tamper clock verification.
 
 ---
 
@@ -47,7 +47,7 @@ Traditional business software in India often forces a compromise between lightwe
 
 ### 2.1 Architectural Paradigm
 
-BillFlow Suite follows a decoupled **Model-View-Service** architecture optimized for Python 3.12+ and Qt6 (PySide6):
+BillFlow Suite follows a decoupled **Model-View-Service** architecture optimized for Python 3.12 - 3.14 (tested on 3.12 and 3.14) and Qt6 (PySide6):
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -71,7 +71,7 @@ BillFlow Suite follows a decoupled **Model-View-Service** architecture optimized
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Presentation Layer (`app/ui/`)**: Built using PySide6 with an executive Bahi-Khata theme. Windows utilize asynchronous workers where appropriate to maintain high interface responsiveness.
+1. **Presentation Layer (`app/ui/`)**: Built using PySide6 with an executive Bahi-Khata theme. Views utilize asynchronous background workers (`QThreadPool` / `QRunnable`) for exports, reports, and backups to prevent UI freezing.
 2. **Business Services Layer (`app/services/`)**: Enforces validation, transactional consistency, tax mathematics, inventory state transitions, and audit generation.
 3. **Data Access Layer (`app/database/`)**: SQLAlchemy ORM with SQLite configured in Write-Ahead Logging (`WAL`) mode to prevent concurrency locks during heavy read/write operations.
 
@@ -208,7 +208,7 @@ Every party maintains a continuous, running statement of account:
 ---
 
 ### 3.5 Inventory & Stock Audit
-* **Live Stock Status**: Instant visibility into on-hand quantities and valuation (FIFO cost basis).
+* **Live Stock Status**: Instant visibility into on-hand quantities and valuation (Stock valuation: current stock × latest purchase price; see [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md)).
 * **Low Stock Alerts**: Real-time identification of items falling below minimum safety thresholds.
 * **Stock Movement Reconciliation**: Detailed audit log aggregating purchases, inward returns, outward sales, and credit returns to reconcile total inventory movement.
 
@@ -308,7 +308,7 @@ The application utilizes 20 relational entities managed through SQLAlchemy:
 
 | Layer | Component | Version | Role in Architecture |
 | :--- | :--- | :--- | :--- |
-| **Language** | Python | 3.10+ / 3.12+ | Core runtime with native `Decimal` financial precision |
+| **Language** | Python | 3.12 - 3.14 | Core runtime with native `Decimal` financial precision (tested on 3.12 and 3.14) |
 | **UI Framework** | PySide6 | 6.5+ | Modern Qt6 GUI with executive dark/light themes |
 | **ORM / Database**| SQLAlchemy & SQLite | 2.0+ / 3.x | Local SQL engine configured in Write-Ahead Logging (`WAL`) mode |
 | **PDF Engine** | ReportLab | 4.0+ | Vector A4 printing of tax invoices, quotations, and statements |
@@ -321,7 +321,7 @@ The application utilizes 20 relational entities managed through SQLAlchemy:
 ## 7. Installation, Setup & Quick Start
 
 ### 7.1 Prerequisites
-* Python 3.10, 3.11, 3.12, or 3.14.
+* Python 3.12 - 3.14 (tested on 3.12 and 3.14).
 * Git (optional).
 * Windows 10/11, macOS, or Linux.
 

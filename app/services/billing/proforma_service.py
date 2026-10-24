@@ -32,6 +32,10 @@ def create_proforma(data: Dict[str, Any], items_data: List[Dict[str, Any]]) -> P
     if not items_data:
         raise ValueError("Proforma must have at least one item.")
     with get_session() as session:
+        try:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        except Exception:
+            pass
         party = session.query(Party).filter(Party.id == data.get("party_id")).first()
         if not party:
             raise ValueError("Party not found.")
@@ -54,9 +58,11 @@ def create_proforma(data: Dict[str, Any], items_data: List[Dict[str, Any]]) -> P
         subtotal = cgst = sgst = igst = Decimal("0.00")
         processed = []
         for it in items_data:
+            from app.services.validation_helpers import normalize_tax_rate
+            tax_rate = normalize_tax_rate(it)
             r = GSTEngine.calculate_line_item(
                 Decimal(str(it.get("quantity", "1"))), Decimal(str(it.get("unit_price", "0"))),
-                Decimal(str(it.get("discount_pct", "0"))), Decimal(str(it.get("gst_rate_pct", "0"))), t_type
+                Decimal(str(it.get("discount_pct", "0"))), tax_rate, t_type
             )
             it_copy = dict(it)
             it_copy.update({"taxable_value": r["taxable_value"], "cgst_amount": r["cgst_amt"],
@@ -72,7 +78,7 @@ def create_proforma(data: Dict[str, Any], items_data: List[Dict[str, Any]]) -> P
             status=data.get("status", "draft"), notes=data.get("notes", ""), is_interstate=is_inter,
             shipping_address=data.get("shipping_address"),
             transporter_name=data.get("transporter_name"),
-            vehicle_no=data.get("vehicle_no"),
+            vehicle_no=str(data["vehicle_no"]).strip().upper() if data.get("vehicle_no") else None,
             lr_no=data.get("lr_no"),
             lr_date=data.get("lr_date"),
             eway_bill_no=data.get("eway_bill_no"),
@@ -80,9 +86,17 @@ def create_proforma(data: Dict[str, Any], items_data: List[Dict[str, Any]]) -> P
             terms_and_conditions=data.get("terms_and_conditions"),
             bank_name=data.get("bank_name"),
             bank_ac_no=data.get("bank_ac_no"),
-            bank_ifsc=data.get("bank_ifsc"),
+            bank_ifsc=str(data["bank_ifsc"]).strip().upper() if data.get("bank_ifsc") else None,
             po_number=data.get("po_number"),
             pi_number=data.get("pi_number"),
+            valid_until=data.get("valid_until"),
+            advance_percent=Decimal(str(data["advance_percent"])) if data.get("advance_percent") is not None and str(data["advance_percent"]).strip() != "" else Decimal("0.00"),
+            advance_received=Decimal(str(data["advance_received"])) if data.get("advance_received") is not None and str(data["advance_received"]).strip() != "" else Decimal("0.00"),
+            payment_terms=data.get("payment_terms"),
+            delivery_period=data.get("delivery_period"),
+            customer_po_no=data.get("customer_po_no"),
+            customer_po_date=data.get("customer_po_date"),
+            linked_invoice_reference=data.get("linked_invoice_reference"),
         )
         session.add(pf); session.flush()
         for it in processed:
@@ -126,6 +140,22 @@ def get_proforma_by_id(pf_id: int):
         return d
 
 
+def get_proforma_by_number(pf_num: str):
+    """Retrieve proforma invoice by its proforma_number."""
+    with get_session() as session:
+        pf = session.query(ProformaInvoice).filter(ProformaInvoice.proforma_number == pf_num).first()
+        if not pf:
+            return None
+        d = pf.to_dict()
+        d["items"] = [it.to_dict() for it in pf.items]
+        d["party_gstin"] = pf.party.gstin if pf.party else ""
+        d["party_address"] = pf.party.address if pf.party else ""
+        d["party_state"] = pf.party.state if pf.party else ""
+        d["party_phone"] = pf.party.phone if pf.party else ""
+        d["party_name"] = pf.party.name if pf.party else ""
+        return d
+
+
 def update_proforma(pf_id: int, pf_data: Dict, items_data: List[Dict] = None):
     """Update an existing proforma invoice."""
     with get_session() as session:
@@ -151,9 +181,11 @@ def update_proforma(pf_id: int, pf_data: Dict, items_data: List[Dict] = None):
             subtotal = cgst = sgst = igst = Decimal("0.00")
             processed = []
             for it in items_data:
+                from app.services.validation_helpers import normalize_tax_rate
+                tax_rate = normalize_tax_rate(it)
                 r = GSTEngine.calculate_line_item(
                     Decimal(str(it.get("quantity", "1"))), Decimal(str(it.get("unit_price", "0"))),
-                    Decimal(str(it.get("discount_pct", "0"))), Decimal(str(it.get("gst_rate_pct", "0"))), t_type
+                    Decimal(str(it.get("discount_pct", "0"))), tax_rate, t_type
                 )
                 it_copy = dict(it)
                 it_copy.update({"taxable_value": r["taxable_value"], "cgst_amount": r["cgst_amt"],
@@ -187,10 +219,15 @@ def update_proforma(pf_id: int, pf_data: Dict, items_data: List[Dict] = None):
             "party_id", "proforma_date", "status", "notes",
             "shipping_address", "transporter_name", "vehicle_no", "lr_no",
             "lr_date", "eway_bill_no", "destination", "terms_and_conditions",
-            "bank_name", "bank_ac_no", "bank_ifsc", "po_number", "pi_number"
+            "bank_name", "bank_ac_no", "bank_ifsc", "po_number", "pi_number",
+            "valid_until", "advance_percent", "advance_received", "payment_terms",
+            "delivery_period", "customer_po_no", "customer_po_date", "linked_invoice_reference",
         ):
             if key in pf_data:
-                setattr(pf, key, pf_data[key])
+                val = pf_data[key]
+                if key in ("vehicle_no", "bank_ifsc") and val:
+                    val = str(val).strip().upper()
+                setattr(pf, key, val)
 
         # Bidirectional sync: if status changed to converted, create/update linked invoice
         if "status" in pf_data and pf_data["status"] == "converted" and pf.proforma_number:
@@ -295,9 +332,25 @@ def get_proforma_count() -> int:
 def convert_to_invoice(pf_id: int) -> Optional[Invoice]:
     """Convert a proforma invoice to a tax invoice and deduct stock."""
     with get_session() as session:
+        try:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        except Exception:
+            pass
         pf = session.query(ProformaInvoice).filter(ProformaInvoice.id == pf_id).first()
         if not pf:
             return None
+        if pf.status == "converted":
+            raise ValueError(f"Proforma Invoice #{pf.proforma_number} has already been converted.")
+        if pf.status in ("cancelled", "rejected"):
+            raise ValueError(f"Cannot convert {pf.status} Proforma Invoice #{pf.proforma_number}.")
+
+        # Atomic check-and-set to block concurrent double-conversion
+        rowcount = session.query(ProformaInvoice).filter(
+            ProformaInvoice.id == pf_id,
+            ProformaInvoice.status.notin_(["converted", "cancelled", "rejected"])
+        ).update({"status": "converted"}, synchronize_session=False)
+        if rowcount == 0:
+            raise ValueError(f"Proforma Invoice #{pf.proforma_number} has already been converted.")
 
         # Get proforma items
         pf_items = session.query(ProformaItem).filter(ProformaItem.proforma_id == pf_id).all()
@@ -308,6 +361,7 @@ def convert_to_invoice(pf_id: int) -> Optional[Invoice]:
         company = session.query(CompanyProfile).first()
         company_sc = company.state_code if company else "27"
         party_sc = party.state_code if party and party.state_code else company_sc
+        allow_neg = getattr(company, "allow_negative_stock", False) if company else False
 
         # Generate invoice number
         from app.services.billing.invoice_service import generate_invoice_number
@@ -362,7 +416,14 @@ def convert_to_invoice(pf_id: int) -> Optional[Invoice]:
             bank_ifsc=pf.bank_ifsc,
             po_number=pf.po_number,
             pi_number=pf.proforma_number,  # Link back to proforma
+            reference_no_date=f"{pf.proforma_number} dt {pf.proforma_date.strftime('%d-%m-%Y') if hasattr(pf.proforma_date, 'strftime') else str(pf.proforma_date)}",
+            other_references=f"Proforma #{pf.proforma_number}",
+            buyers_order_no=getattr(pf, "customer_po_no", "") or pf.po_number or "",
+            buyers_order_date=getattr(pf, "customer_po_date", None),
+            mode_terms_of_payment=getattr(pf, "payment_terms", "") or "",
+            terms_of_delivery=getattr(pf, "delivery_period", "") or "",
         )
+        pf.linked_invoice_reference = inv_number
         session.add(invoice)
         session.flush()
 
@@ -390,8 +451,21 @@ def convert_to_invoice(pf_id: int) -> Optional[Invoice]:
             if it.get("product_id"):
                 product = session.query(Product).filter(Product.id == it["product_id"]).first()
                 if product:
-                    qty = float(it.get("quantity", 0))
-                    product.stock_quantity = max(Decimal("0"), product.stock_quantity - Decimal(str(qty)))
+                    qty = Decimal(str(it.get("quantity", "0")))
+                    if not allow_neg and qty > product.stock_quantity:
+                        raise ValueError(
+                            f"Insufficient stock for product '{product.name}'. Available: {product.stock_quantity}, Requested: {qty}."
+                        )
+                    product.stock_quantity -= qty
+
+        # Post sales voucher to ledger
+        from app.services.billing.invoice_service import post_sales_voucher
+        post_sales_voucher(
+            invoice,
+            session=session,
+            reference_no=pf.proforma_number,
+            narration=f"Tax Invoice #{invoice.invoice_number} (From Proforma #{pf.proforma_number})"
+        )
 
         session.flush()
         session.refresh(invoice)

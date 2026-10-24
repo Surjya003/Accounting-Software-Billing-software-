@@ -1,0 +1,137 @@
+[
+  {
+    "operation": "Dataset Generation (32k+ records)",
+    "data_size": "2k parties, 5k products, 5k invoices, 20k vouchers",
+    "time_seconds": 0.499,
+    "memory_mb": 109.04,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "NORMAL"
+  },
+  {
+    "operation": "List All Parties Query",
+    "data_size": "2000 rows",
+    "time_seconds": 0.124,
+    "memory_mb": 109.93,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "NORMAL"
+  },
+  {
+    "operation": "Search Parties (Substring)",
+    "data_size": "100 matches",
+    "time_seconds": 0.013,
+    "memory_mb": 109.95,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "NORMAL"
+  },
+  {
+    "operation": "List All Products Query",
+    "data_size": "500 rows",
+    "time_seconds": 0.017,
+    "memory_mb": 110.21,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "NORMAL"
+  },
+  {
+    "operation": "List All Invoices Query",
+    "data_size": "5000 rows",
+    "time_seconds": 0.865,
+    "memory_mb": 122.6,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "NORMAL"
+  },
+  {
+    "operation": "Dashboard KPIs Aggregation",
+    "data_size": "Full Dataset",
+    "time_seconds": 0.142,
+    "memory_mb": 124.34,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "NORMAL"
+  },
+  {
+    "operation": "Day Book Report (30-day range)",
+    "data_size": "2009 entries",
+    "time_seconds": 0.25,
+    "memory_mb": 124.48,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "NORMAL"
+  },
+  {
+    "operation": "Trial Balance Computation",
+    "data_size": "1202 accounts",
+    "time_seconds": 0.768,
+    "memory_mb": 143.84,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "NORMAL"
+  },
+  {
+    "operation": "P&L Report Calculation",
+    "data_size": "9-Month FY Period",
+    "time_seconds": 49.914,
+    "memory_mb": 138.36,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "SLOW (>2.0s)"
+  },
+  {
+    "operation": "GSTR-1 Report Aggregation",
+    "data_size": "3670 rows",
+    "time_seconds": 0.391,
+    "memory_mb": 138.76,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "NORMAL"
+  },
+  {
+    "operation": "150-Item Invoice PDF Generation",
+    "data_size": "Multi-page PDF (55.2 KB)",
+    "time_seconds": 3.278,
+    "memory_mb": 134.73,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "SLOW (>2.0s)"
+  },
+  {
+    "operation": "Day Book Excel Export",
+    "data_size": "6096 rows (198.0 KB)",
+    "time_seconds": 4.511,
+    "memory_mb": 147.59,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "SLOW (>2.0s)"
+  },
+  {
+    "operation": "Database Backup (Native SQLite API)",
+    "data_size": "32k records (9.80 MB)",
+    "time_seconds": 0.059,
+    "memory_mb": 150.61,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "NORMAL"
+  },
+  {
+    "operation": "Database Restore (Native SQLite API)",
+    "data_size": "32k records (9.80 MB)",
+    "time_seconds": 0.299,
+    "memory_mb": 156.29,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "NORMAL"
+  },
+  {
+    "operation": "Memory Growth Test (50 cycles)",
+    "data_size": "Initial: 156.3MB -> Final: 146.6MB (Growth: -9.7MB)",
+    "time_seconds": 0.716,
+    "memory_mb": 146.59,
+    "cpu_percent": 0.0,
+    "freeze": "No",
+    "flag": "NORMAL"
+  }
+]

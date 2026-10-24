@@ -15,12 +15,15 @@ from app.config import (
     VOUCHER_DEBIT, VOUCHER_CREDIT, VOUCHER_JOURNAL
 )
 
-def validate_gstin(gstin: Optional[str]) -> bool:
-    """Validates Indian 15-character GSTIN structure."""
-    if not gstin or not gstin.strip():
-        return True  # GSTIN is optional for unregistered dealers
-    pattern = r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$"
-    return bool(re.match(pattern, gstin.strip().upper()))
+from app.services.validation_helpers import (
+    parse_decimal, validate_gstin as helper_validate_gstin,
+    validate_indian_phone, normalize_name, enforce_max_length,
+    VALID_GSTIN_STATE_CODES, validate_model_dict, validate_pan
+)
+
+def validate_gstin(gstin: Optional[str], state_code: Optional[str] = None) -> bool:
+    """Validates Indian 15-character GSTIN structure (BUG-04, BUG-05)."""
+    return helper_validate_gstin(gstin, state_code=state_code)
 
 def generate_party_code(session: Session, party_type: str) -> str:
     """Generates next available unique party code like CUST-0001, SUPP-0001, PTY-0001."""
@@ -38,109 +41,137 @@ def generate_party_code(session: Session, party_type: str) -> str:
     return f"{prefix}-{seq:04d}"
 
 
-def create_party(party_data: Dict[str, Any]) -> Party:
-    """Creates a new Party Master entry with input validation."""
-    name = (party_data.get("name") or "").strip()
-    if not name:
-        raise ValueError("Party Name is required and cannot be empty.")
-        
-    gstin = (party_data.get("gstin") or "").strip().upper()
-    if gstin and not validate_gstin(gstin):
-        raise ValueError(f"Invalid GSTIN format '{gstin}'. Must be a 15-character valid Indian GSTIN.")
-        
-    op_bal = party_data.get("opening_balance", Decimal("0.00"))
-    if op_bal is not None:
-        try:
-            op_bal_dec = Decimal(str(op_bal))
-            if op_bal_dec < 0:
-                raise ValueError("Opening balance cannot be negative.")
-            party_data["opening_balance"] = op_bal_dec
-        except Exception as e:
-            if "negative" in str(e):
-                raise
-            raise ValueError(f"Invalid opening balance: {op_bal}")
-            
-    phone = (party_data.get("phone") or "").strip()
-    if phone:
-        clean_phone = re.sub(r"[^\d]", "", phone)
-        if len(clean_phone) < 7 or len(clean_phone) > 15:
-            raise ValueError(f"Invalid phone number format '{phone}'. Must be a valid contact number.")
+def _validate_party_fields(party_data: Dict[str, Any], session: Session, party_id: Optional[int] = None) -> Dict[str, Any]:
+    """Shared validator for Party create and update (BUG-04, 05, 06, 07, 08, 27, 28)."""
+    cleaned = dict(party_data)
 
-    email = (party_data.get("email") or "").strip()
-    if email:
-        email_pattern = r"^[\w\.\+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-\.]+$"
-        if not re.match(email_pattern, email):
-            raise ValueError(f"Invalid email address format '{email}'.")
+    if "name" in cleaned or party_id is None:
+        name = normalize_name(cleaned.get("name", ""))
+        if not name:
+            raise ValueError("Party Name is required and cannot be empty.")
+        enforce_max_length("Party Name", name, 200)
+        cleaned["name"] = name
 
-    with get_session() as session:
-        # Check duplicate party name
-        existing_party = session.query(Party).filter(
+        # Duplicate check on normalized name
+        q = session.query(Party).filter(
             func.lower(Party.name) == name.lower(),
-            Party.is_active == True
-        ).first()
-        if existing_party:
+            Party.is_active.is_(True)
+        )
+        if party_id:
+            q = q.filter(Party.id != party_id)
+        if q.first():
             raise ValueError(f"A party with the name '{name}' already exists.")
 
-        if not party_data.get("code"):
-            party_data["code"] = generate_party_code(session, party_data.get("party_type", PARTY_TYPE_CUSTOMER))
-        
-        # Format strings
-        if gstin:
-            party_data["gstin"] = gstin
-        if party_data.get("pan"):
-            party_data["pan"] = party_data["pan"].strip().upper()
-            
-        party = Party(**party_data)
+    if "gstin" in cleaned:
+        raw_gstin = cleaned.get("gstin")
+        if raw_gstin and str(raw_gstin).strip():
+            gstin = str(raw_gstin).strip().upper()
+            sc = cleaned.get("state_code")
+            if not validate_gstin(gstin, state_code=sc):
+                if gstin[:2] not in VALID_GSTIN_STATE_CODES:
+                    raise ValueError(f"Invalid GSTIN state code '{gstin[:2]}'. State code must be between 01 and 38 or 97.")
+                if sc and gstin[:2] != str(sc).strip().zfill(2):
+                    raise ValueError(f"GSTIN state code '{gstin[:2]}' does not match party selected state code '{sc}'.")
+                raise ValueError(f"Invalid GSTIN format '{gstin}'. Must be a 15-character valid Indian GSTIN.")
+            cleaned["gstin"] = gstin
+        else:
+            cleaned["gstin"] = ""
+
+    if "pan" in cleaned:
+        raw_pan = cleaned.get("pan")
+        if raw_pan and str(raw_pan).strip():
+            pan = str(raw_pan).strip().upper()
+            if not validate_pan(pan):
+                raise ValueError(f"Invalid PAN format '{pan}'. Must be a 10-character valid Indian PAN (e.g. ABCDE1234F).")
+            cleaned["pan"] = pan
+        else:
+            cleaned["pan"] = ""
+
+    if "phone" in cleaned:
+        raw_phone = cleaned.get("phone")
+        if raw_phone and str(raw_phone).strip():
+            is_valid, clean_p = validate_indian_phone(raw_phone)
+            if not is_valid:
+                raise ValueError(f"Invalid Indian mobile number '{raw_phone}'. Must be exactly 10 digits starting with 6, 7, 8, or 9.")
+            cleaned["phone"] = clean_p
+        else:
+            cleaned["phone"] = ""
+
+    if "email" in cleaned:
+        email = (cleaned.get("email") or "").strip()
+        if email:
+            enforce_max_length("Email", email, 100)
+            email_pattern = r"^[\w\.\+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-\.]+$"
+            if not re.match(email_pattern, email):
+                raise ValueError(f"Invalid email address format '{email}'.")
+            cleaned["email"] = email
+        else:
+            cleaned["email"] = ""
+
+    if "credit_limit" in cleaned and cleaned["credit_limit"] is not None:
+        cl = parse_decimal(cleaned["credit_limit"])
+        if cl < Decimal("0.00"):
+            raise ValueError("Credit limit cannot be negative.")
+        cleaned["credit_limit"] = cl
+
+    if "credit_period_days" in cleaned and cleaned["credit_period_days"] is not None:
+        try:
+            cpd = int(cleaned["credit_period_days"])
+            if cpd < 0:
+                raise ValueError("Credit period days cannot be negative.")
+            cleaned["credit_period_days"] = cpd
+        except ValueError:
+            raise ValueError("Credit period days cannot be negative.")
+
+    if "opening_balance" in cleaned and cleaned["opening_balance"] is not None:
+        op = parse_decimal(cleaned["opening_balance"])
+        if op < Decimal("0.00"):
+            raise ValueError("Opening balance cannot be negative.")
+        cleaned["opening_balance"] = op
+
+    # Text length validations
+    for field, max_l in [
+        ("address", 500), ("city", 100), ("state", 100), ("pincode", 10),
+        ("contact_person", 100), ("notes", 500), ("pan", 10)
+    ]:
+        if field in cleaned and cleaned[field]:
+            enforce_max_length(field.capitalize(), str(cleaned[field]), max_l)
+            if field == "pan":
+                cleaned["pan"] = str(cleaned[field]).strip().upper()
+
+    return cleaned
+
+
+def create_party(party_data: Dict[str, Any]) -> Party:
+    """Creates a new Party Master entry with input validation."""
+    validate_model_dict(Party, party_data)
+    with get_session() as session:
+        validated = _validate_party_fields(party_data, session=session)
+
+        if not validated.get("code"):
+            validated["code"] = generate_party_code(session, validated.get("party_type", PARTY_TYPE_CUSTOMER))
+
+        party = Party(**validated)
         session.add(party)
         session.flush()
         session.refresh(party)
         return party
 
+
 def update_party(party_id: int, party_data: Dict[str, Any]) -> Optional[Party]:
     """Updates an existing Party Master entry with input validation."""
-    if "name" in party_data:
-        name = (party_data.get("name") or "").strip()
-        if not name:
-            raise ValueError("Party Name cannot be empty.")
-            
-    if "gstin" in party_data:
-        gstin = (party_data.get("gstin") or "").strip().upper()
-        if gstin and not validate_gstin(gstin):
-            raise ValueError(f"Invalid GSTIN format '{gstin}'. Must be a 15-character valid Indian GSTIN.")
-
-    if "phone" in party_data:
-        phone = (party_data.get("phone") or "").strip()
-        if phone:
-            clean_phone = re.sub(r"[^\d]", "", phone)
-            if len(clean_phone) < 7 or len(clean_phone) > 15:
-                raise ValueError(f"Invalid phone number format '{phone}'.")
-
-    if "email" in party_data:
-        email = (party_data.get("email") or "").strip()
-        if email:
-            email_pattern = r"^[\w\.\+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-\.]+$"
-            if not re.match(email_pattern, email):
-                raise ValueError(f"Invalid email address format '{email}'.")
-            
-    if "opening_balance" in party_data and party_data["opening_balance"] is not None:
-        op_bal_dec = Decimal(str(party_data["opening_balance"]))
-        if op_bal_dec < 0:
-            raise ValueError("Opening balance cannot be negative.")
-        party_data["opening_balance"] = op_bal_dec
-
+    validate_model_dict(Party, party_data)
     with get_session() as session:
         party = session.query(Party).filter(Party.id == party_id).first()
         if not party:
             return None
-        
-        for key, value in party_data.items():
+
+        validated = _validate_party_fields(party_data, session=session, party_id=party_id)
+
+        for key, value in validated.items():
             if hasattr(party, key) and key != "id":
-                if key == "gstin" and value:
-                    value = value.strip().upper()
-                if key == "pan" and value:
-                    value = value.strip().upper()
                 setattr(party, key, value)
-        
+
         session.flush()
         session.refresh(party)
         return party

@@ -21,6 +21,26 @@ class GSTEngine:
     VALID_TAX_RATES = {Decimal("0"), Decimal("5"), Decimal("12"), Decimal("18"), Decimal("28")}
 
     @staticmethod
+    def calculate_round_off(amount: Decimal):
+        """
+        Calculates rounding adjustment and rounded amount using ROUND_HALF_UP (nearest integer rupee).
+        Returns (round_off, rounded_amount) where:
+            rounded_amount = (amount).quantize(Decimal("1"), rounding=ROUND_HALF_UP).quantize(Decimal("0.01"))
+            round_off = (rounded_amount - amount).quantize(Decimal("0.01"))
+        Supports positive and negative amounts (credit notes).
+        Example:
+            124.55 -> (+0.45, 125.00)
+            124.50 -> (+0.50, 125.00)
+            124.49 -> (-0.49, 124.00)
+            -124.55 -> (-0.45, -125.00)
+            -124.49 -> (+0.49, -124.00)
+        """
+        amt = Decimal(str(amount)).quantize(Decimal("0.01"))
+        rounded = amt.quantize(Decimal("1"), rounding=ROUND_HALF_UP).quantize(Decimal("0.01"))
+        round_off = (rounded - amt).quantize(Decimal("0.01"))
+        return round_off, rounded
+
+    @staticmethod
     def determine_transaction_type(source_state_code: str, dest_state_code: str) -> TransactionType:
         """Determine if a transaction is intra-state or inter-state based on state codes."""
         if source_state_code and dest_state_code:

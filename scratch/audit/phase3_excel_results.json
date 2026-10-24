@@ -1,0 +1,80 @@
+[
+  {
+    "file": "Party_Ledger_Delhi.xlsx",
+    "report_name": "Party Ledger Excel",
+    "rows": 10,
+    "cols": 8,
+    "headers_ok": "Yes",
+    "numbers_match_screen": "Yes",
+    "formatting_issues": "None",
+    "has_frozen_header": "No",
+    "excel_path": "C:\\Users\\surjy\\OneDrive\\Desktop\\Accounting Software\\scratch\\audit\\excel_outputs\\Party_Ledger_Delhi.xlsx",
+    "status": "Pass",
+    "severity": "None"
+  },
+  {
+    "file": "Outstanding_Receivables.xlsx",
+    "report_name": "Outstanding Dues Excel",
+    "rows": 10,
+    "cols": 9,
+    "headers_ok": "Yes",
+    "numbers_match_screen": "Yes",
+    "formatting_issues": "None",
+    "has_frozen_header": "No",
+    "excel_path": "C:\\Users\\surjy\\OneDrive\\Desktop\\Accounting Software\\scratch\\audit\\excel_outputs\\Outstanding_Receivables.xlsx",
+    "status": "Pass",
+    "severity": "None"
+  },
+  {
+    "file": "DayBook_Today.xlsx",
+    "report_name": "Day Book Excel",
+    "rows": 13,
+    "cols": 8,
+    "headers_ok": "Yes",
+    "numbers_match_screen": "Yes",
+    "formatting_issues": "None",
+    "has_frozen_header": "No",
+    "excel_path": "C:\\Users\\surjy\\OneDrive\\Desktop\\Accounting Software\\scratch\\audit\\excel_outputs\\DayBook_Today.xlsx",
+    "status": "Pass",
+    "severity": "None"
+  },
+  {
+    "file": "Trial_Balance_Report.xlsx",
+    "report_name": "Trial Balance Excel",
+    "rows": 26,
+    "cols": 8,
+    "headers_ok": "Yes",
+    "numbers_match_screen": "Yes",
+    "formatting_issues": "None",
+    "has_frozen_header": "No",
+    "excel_path": "C:\\Users\\surjy\\OneDrive\\Desktop\\Accounting Software\\scratch\\audit\\excel_outputs\\Trial_Balance_Report.xlsx",
+    "status": "Pass",
+    "severity": "None"
+  },
+  {
+    "file": "\u0926\u0948\u0928\u093f\u0915_\u0916\u093e\u0924\u093e_DayBook.xlsx",
+    "report_name": "Unicode Path & File Export",
+    "rows": 10,
+    "cols": 8,
+    "headers_ok": "Yes",
+    "numbers_match_screen": "Yes",
+    "formatting_issues": "None",
+    "has_frozen_header": "No",
+    "excel_path": "C:\\Users\\surjy\\OneDrive\\Desktop\\Accounting Software\\scratch\\audit\\excel_outputs\\\u0935\u094d\u092f\u093e\u092a\u093e\u0930 \u0928\u093f\u0930\u094d\u092f\u093e\u0924 Accounts 2026\\\u0926\u0948\u0928\u093f\u0915_\u0916\u093e\u0924\u093e_DayBook.xlsx",
+    "status": "Pass",
+    "severity": "None"
+  },
+  {
+    "file": "None Party Validation",
+    "report_name": "Export without selected party",
+    "rows": 0,
+    "cols": 0,
+    "headers_ok": "N/A",
+    "numbers_match_screen": "N/A",
+    "formatting_issues": "None (Properly rejected)",
+    "has_frozen_header": "N/A",
+    "excel_path": "N/A",
+    "status": "Pass",
+    "severity": "None"
+  }
+]

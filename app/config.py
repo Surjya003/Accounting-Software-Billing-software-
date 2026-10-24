@@ -25,6 +25,7 @@ APP_NAME = "BillFlow"
 APP_VERSION = "1.0.0"
 APP_SUBTITLE = "Commercial Party-wise Ledger & Accounting System"
 ORGANIZATION = "Vyapar Software Solutions"
+TRIAL_DAYS = 14
 
 # Formatting & Currency
 CURRENCY_SYMBOL = "₹"

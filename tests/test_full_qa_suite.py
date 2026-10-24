@@ -537,7 +537,7 @@ def run_full_qa():
 
     # 3. 100% discount
     try:
-        inv_free = create_invoice({"party_id": cust_in.id}, [{"product_id": prod_milk.id, "quantity": 5.0, "unit_price": 60.0, "discount_pct": 100.0}])
+        inv_free = create_invoice({"party_id": cust_in.id}, [{"product_id": prod_milk.id, "quantity": 5.0, "unit_price": 60.0, "discount_pct": 100.0, "tax_rate": 0.0}])
         assert inv_free.total_amount == Decimal("0.00")
         record_tc("INV-05", "Invoices", "Commercial Promotion: 100% Discount Sample Item", "Boundary", "Pass discount = 100%", "100%", "Total amount = 0.00", f"Total calculated correctly: {inv_free.total_amount}", "PASS")
     except Exception as e:

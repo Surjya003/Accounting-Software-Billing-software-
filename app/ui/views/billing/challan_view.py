@@ -1,157 +1,151 @@
 """
-Delivery Challan View — Create and manage delivery challans.
+Delivery Challan View & Form Dialog.
+Allows creating, editing, and printing Delivery Challans.
 """
+import os
+import subprocess
 from datetime import date
 from decimal import Decimal
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QTableWidget, QTableWidgetItem, QHeaderView, QFrame, QComboBox,
-    QDialog, QMessageBox, QDateEdit, QTextEdit, QRadioButton, QButtonGroup,
-    QScrollArea
+    QDialog, QDateEdit, QTextEdit, QRadioButton, QButtonGroup,
+    QTabWidget, QScrollArea, QFormLayout
 )
 from PySide6.QtCore import Qt, Signal, QDate
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtGui import QFont
 
-from app.database.connection import get_session
-from app.database.models import CompanyProfile
-from app.services.billing.gst_engine import GSTEngine, TransactionType
 from app.services.billing import challan_service, product_service
 from app.services.party_service import get_all_parties
 from app.ui.views.billing.invoice_view import InvoiceItemWidget
+from app.ui.theme import theme_manager
+from app.ui.theme.widgets import (
+    PageHeaderWidget, CardFrame, StatusBadgeLabel, ThemedMessageBox,
+    configure_dialog_window_flags
+)
 
 
 class ChallanFormDialog(QDialog):
+    """Dialog for creating/editing a delivery challan."""
+
     def __init__(self, ch_data=None, parent=None):
         super().__init__(parent)
         self.ch_data = ch_data
-        self.setWindowTitle("Edit Challan" if ch_data else "New Delivery Challan")
-        self.setMinimumSize(950, 650)
-        self.item_widgets = []
+        self.setWindowTitle("Edit Delivery Challan" if ch_data else "New Delivery Challan")
+        configure_dialog_window_flags(self, min_width=920, min_height=640)
         self.products = product_service.get_all_products()
-        self.company_state_code = "27"
-        self._load_company_state()
+        self.parties = get_all_parties()
+        self.item_widgets = []
         self.init_ui()
-        if self.ch_data:
-            self.populate(self.ch_data)
-        else:
-            self._update_totals()
-
-    def _load_company_state(self):
-        try:
-            with get_session() as session:
-                comp = session.query(CompanyProfile).first()
-                if comp:
-                    sc = comp.state_code or ""
-                    if not sc and comp.gstin and len(comp.gstin) >= 2 and comp.gstin[:2].isdigit():
-                        sc = comp.gstin[:2]
-                    if sc:
-                        self.company_state_code = sc
-        except Exception:
-            self.company_state_code = "27"
+        if ch_data:
+            self.load_data(ch_data)
 
     def init_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
+        layout.setSpacing(16)
 
-        title = QLabel("Edit Delivery Challan" if self.ch_data else "Create Delivery Challan")
-        title.setStyleSheet("font-size: 18px; font-weight: 600; color: #1B1B18;")
+        # Title
+        title_text = "Edit Delivery Challan" if self.ch_data else "New Delivery Challan"
+        title = QLabel(title_text)
+        title.setFont(theme_manager.get_font("title", bold=True))
         layout.addWidget(title)
 
-        # Reference numbers: Challan No (manual), Date
-        ref_frame = QFrame()
-        ref_frame.setObjectName("Card")
-        ref_layout = QHBoxLayout(ref_frame)
-
-        ch_no_box = QVBoxLayout()
-        ch_no_box.addWidget(QLabel("Challan Number (manual)"))
-        self.txt_challan_number = QLineEdit()
-        self.txt_challan_number.setPlaceholderText("Enter manually e.g. DC/001")
-        ch_no_box.addWidget(self.txt_challan_number)
-        ref_layout.addLayout(ch_no_box, 2)
-
-        date_box = QVBoxLayout()
-        date_box.addWidget(QLabel("Date *"))
-        self.dt_date = QDateEdit(QDate.currentDate())
-        self.dt_date.setCalendarPopup(True)
-        self.dt_date.setDisplayFormat("dd-MM-yyyy")
-        date_box.addWidget(self.dt_date)
-        ref_layout.addLayout(date_box, 1)
-
-        # Tax Mode
-        tax_box = QVBoxLayout()
-        tax_box.addWidget(QLabel("Tax Mode"))
-        self.tax_mode_group = QButtonGroup()
-        tax_layout = QHBoxLayout()
-        self.rb_auto = QRadioButton("Auto")
-        self.rb_intra = QRadioButton("Intra-State (CGST+SGST)")
-        self.rb_inter = QRadioButton("Inter-State (IGST)")
-        self.rb_auto.setChecked(True)
-        self.tax_mode_group.addButton(self.rb_auto, 0)
-        self.tax_mode_group.addButton(self.rb_intra, 1)
-        self.tax_mode_group.addButton(self.rb_inter, 2)
-        tax_layout.addWidget(self.rb_auto)
-        tax_layout.addWidget(self.rb_intra)
-        tax_layout.addWidget(self.rb_inter)
-        tax_box.addLayout(tax_layout)
-        ref_layout.addLayout(tax_box, 2)
-
-        layout.addWidget(ref_frame)
-
-        # Party selection
-        form_frame = QFrame()
-        form_frame.setObjectName("Card")
-        form_layout = QHBoxLayout(form_frame)
+        # Top row: Party, Challan No, Date, Supply Type
+        top_grid = QHBoxLayout()
+        top_grid.setSpacing(12)
 
         party_box = QVBoxLayout()
-        party_box.addWidget(QLabel("Party *"))
+        party_box.addWidget(QLabel("Party / Consignee *"))
         self.cmb_party = QComboBox()
         self.cmb_party.setEditable(True)
-        self.cmb_party.lineEdit().setPlaceholderText("-- Select Party --")
-        self.cmb_party.addItem("", None)
-        self.parties_map = {}
-        for p in get_all_parties():
-            self.parties_map[p["id"]] = p
-            self.cmb_party.addItem(p["name"], p["id"])
-        self.cmb_party.currentIndexChanged.connect(self._update_totals)
+        self.cmb_party.lineEdit().setPlaceholderText("Select party...")
+        for p in self.parties:
+            gst_label = f" ({p.get('gstin')})" if p.get("gstin") else ""
+            self.cmb_party.addItem(f"{p['name']}{gst_label}", p["id"])
         party_box.addWidget(self.cmb_party)
-        form_layout.addLayout(party_box, 2)
+        top_grid.addLayout(party_box, 2)
 
-        # Status
-        status_box = QVBoxLayout()
-        status_box.addWidget(QLabel("Status"))
-        self.cmb_status = QComboBox()
-        self.cmb_status.addItems(["sent", "received", "returned", "converted"])
-        status_box.addWidget(self.cmb_status)
-        form_layout.addLayout(status_box, 1)
+        num_box = QVBoxLayout()
+        num_box.addWidget(QLabel("Challan # (Auto)"))
+        self.txt_ch_number = QLineEdit()
+        self.txt_ch_number.setPlaceholderText("Leave blank for auto")
+        num_box.addWidget(self.txt_ch_number)
+        top_grid.addLayout(num_box, 1)
 
-        layout.addWidget(form_frame)
+        date_box = QVBoxLayout()
+        date_box.addWidget(QLabel("Challan Date *"))
+        self.dt_date = QDateEdit()
+        self.dt_date.setCalendarPopup(True)
+        self.dt_date.setDate(QDate.currentDate())
+        self.dt_date.setDisplayFormat("dd-MM-yyyy")
+        date_box.addWidget(self.dt_date)
+        top_grid.addLayout(date_box, 1)
 
-        # Items header
+        tax_box = QVBoxLayout()
+        tax_box.addWidget(QLabel("Supply Type"))
+        self.cmb_tax_mode = QComboBox()
+        self.cmb_tax_mode.addItems(["Intra-State (CGST + SGST)", "Inter-State (IGST)"])
+        self.cmb_tax_mode.currentIndexChanged.connect(self._update_totals)
+        tax_box.addWidget(self.cmb_tax_mode)
+        top_grid.addLayout(tax_box, 1)
+
+        layout.addLayout(top_grid)
+
+        # Challan Type Selection
+        type_row = QHBoxLayout()
+        type_row.addWidget(QLabel("Challan Type:"))
+        self.rb_supply = QRadioButton("Supply on Approval")
+        self.rb_jobwork = QRadioButton("Job Work")
+        self.rb_other = QRadioButton("Other / Returnable")
+        self.rb_supply.setChecked(True)
+        self.bg_type = QButtonGroup(self)
+        self.bg_type.addButton(self.rb_supply)
+        self.bg_type.addButton(self.rb_jobwork)
+        self.bg_type.addButton(self.rb_other)
+        type_row.addWidget(self.rb_supply)
+        type_row.addWidget(self.rb_jobwork)
+        type_row.addWidget(self.rb_other)
+        type_row.addStretch()
+        layout.addLayout(type_row)
+
+        # Tabs for Items and Logistics
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
+
+        # === TAB 1: LINE ITEMS ===
+        tab_items = QWidget()
+        tab_items_layout = QVBoxLayout(tab_items)
+        tab_items_layout.setContentsMargins(12, 12, 12, 12)
+        tab_items_layout.setSpacing(10)
+
         items_header = QHBoxLayout()
         lbl_items = QLabel("Line Items")
-        lbl_items.setStyleSheet("font-size: 15px; font-weight: 600; color: #1B1B18;")
+        lbl_items.setFont(theme_manager.get_font("subtitle", bold=True))
         items_header.addWidget(lbl_items)
         items_header.addStretch()
-        btn_add_item = QPushButton("+ Add Item")
-        btn_add_item.setObjectName("PrimaryBtn")
-        btn_add_item.clicked.connect(self.add_item)
+        btn_add_item = QPushButton(" Add Item")
+        btn_add_item.setIcon(theme_manager.get_icon("plus", size=16))
+        btn_add_item.setProperty("variant", "secondary")
+        btn_add_item.setFixedHeight(34)
+        btn_add_item.clicked.connect(self.add_item_row)
         items_header.addWidget(btn_add_item)
-        layout.addLayout(items_header)
+        tab_items_layout.addLayout(items_header)
 
         # Column labels
         col_labels = QHBoxLayout()
         col_labels.setContentsMargins(8, 0, 8, 0)
+        col_labels.setSpacing(8)
         for label, stretch in [("Product", 3), ("Qty", 1), ("Rate (₹)", 1), ("Disc %", 1), ("GST %", 1), ("Total", 1), ("", 0)]:
             lbl = QLabel(label)
-            lbl.setStyleSheet("font-size: 11px; font-weight: 600; color: #6B6558; text-transform: uppercase;")
+            lbl.setFont(theme_manager.get_font("caption", bold=True))
             if stretch:
                 col_labels.addWidget(lbl, stretch)
             else:
                 col_labels.addWidget(lbl)
-        layout.addLayout(col_labels)
+        tab_items_layout.addLayout(col_labels)
 
-        # Items container inside scroll area
         items_scroll = QWidget()
         self.items_layout = QVBoxLayout(items_scroll)
         self.items_layout.setSpacing(6)
@@ -162,274 +156,351 @@ class ChallanFormDialog(QDialog):
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(items_scroll)
         scroll_area.setMinimumHeight(150)
-        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        layout.addWidget(scroll_area)
+        tab_items_layout.addWidget(scroll_area, 1)
 
-        self.add_item()
+        self.add_item_row()
 
-        # Totals container
-        totals_frame = QFrame()
-        totals_frame.setObjectName("Card")
+        # Totals Frame
+        totals_frame = CardFrame()
+        totals_frame.setMinimumHeight(56)
+        totals_frame.setMaximumHeight(70)
         totals_layout = QHBoxLayout(totals_frame)
+        totals_layout.setContentsMargins(12, 8, 12, 8)
         totals_layout.addStretch()
 
         self.lbl_subtotal = QLabel("Subtotal: ₹0.00")
-        self.lbl_cgst = QLabel("CGST: ₹0.00")
-        self.lbl_sgst = QLabel("SGST: ₹0.00")
-        self.lbl_igst = QLabel("IGST: ₹0.00")
+        self.lbl_subtotal.setFont(theme_manager.get_font("body", bold=True))
         self.lbl_tax = QLabel("Tax: ₹0.00")
+        self.lbl_tax.setFont(theme_manager.get_font("body", bold=True))
         self.lbl_grand = QLabel("Total: ₹0.00")
-        self.lbl_grand.setStyleSheet("font-size: 18px; font-weight: bold; color: #2C3E63; font-family: Consolas; padding: 4px 12px;")
-        for lbl in [self.lbl_subtotal, self.lbl_cgst, self.lbl_sgst, self.lbl_igst, self.lbl_tax]:
-            lbl.setStyleSheet("font-family: Consolas; font-size: 13px; padding: 4px 12px;")
-            totals_layout.addWidget(lbl)
+        self.lbl_grand.setFont(theme_manager.get_font("subtitle", bold=True))
+
+        totals_layout.addWidget(self.lbl_subtotal)
+        totals_layout.addSpacing(20)
+        totals_layout.addWidget(self.lbl_tax)
+        totals_layout.addSpacing(20)
         totals_layout.addWidget(self.lbl_grand)
 
-        layout.addWidget(totals_frame)
-        
-        # Connect tax mode changes to update totals
-        self.tax_mode_group.buttonClicked.connect(self._update_totals)
+        tab_items_layout.addWidget(totals_frame, 0)
+        self.tabs.addTab(tab_items, "Items & Totals")
 
-        # Transport & Notes
-        self.txt_transport = QLineEdit()
-        self.txt_transport.setPlaceholderText("Transport details...")
-        layout.addWidget(self.txt_transport)
+        # === TAB 2: LOGISTICS ===
+        tab_log = QWidget()
+        tab_log_layout = QFormLayout(tab_log)
+        tab_log_layout.setContentsMargins(16, 16, 16, 16)
+        tab_log_layout.setSpacing(12)
 
+        self.txt_shipping_address = QTextEdit()
+        self.txt_shipping_address.setMaximumHeight(60)
+        tab_log_layout.addRow("Delivery Address", self.txt_shipping_address)
+
+        self.txt_transporter = QLineEdit()
+        tab_log_layout.addRow("Transporter Name", self.txt_transporter)
+
+        from app.ui.widgets.upper_line_edit import UpperLineEdit
+        self.txt_vehicle_no = UpperLineEdit()
+        tab_log_layout.addRow("Vehicle No", self.txt_vehicle_no)
+
+        self.txt_lr_no = QLineEdit()
+        tab_log_layout.addRow("LR / RR No", self.txt_lr_no)
+
+        self.txt_eway_bill = QLineEdit()
+        tab_log_layout.addRow("E-Way Bill No", self.txt_eway_bill)
+
+        self.txt_destination = QLineEdit()
+        tab_log_layout.addRow("Destination", self.txt_destination)
+
+        self.tabs.addTab(tab_log, "Logistics & Transport")
+
+        # Notes
         self.txt_notes = QTextEdit()
         self.txt_notes.setMaximumHeight(50)
-        self.txt_notes.setPlaceholderText("Notes...")
+        self.txt_notes.setPlaceholderText("Optional remarks...")
         layout.addWidget(self.txt_notes)
 
         # Buttons
         btn_layout = QHBoxLayout()
-        btn_save = QPushButton("Save Challan")
-        btn_save.setObjectName("PrimaryBtn")
-        btn_save.setFixedHeight(40)
-        btn_save.clicked.connect(self.accept)
-        btn_cancel = QPushButton("Cancel")
-        btn_cancel.setFixedHeight(40)
-        btn_cancel.clicked.connect(self.reject)
-        btn_layout.addWidget(btn_save)
-        btn_layout.addWidget(btn_cancel)
         btn_layout.addStretch()
+
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.setProperty("variant", "secondary")
+        btn_cancel.setFixedHeight(36)
+        btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(btn_cancel)
+
+        btn_save = QPushButton("Save Challan")
+        btn_save.setIcon(theme_manager.get_icon("save", token_color="text_on_accent", size=16))
+        btn_save.setProperty("variant", "primary")
+        btn_save.setFixedHeight(36)
+        btn_save.clicked.connect(self.accept)
+        btn_layout.addWidget(btn_save)
+
         layout.addLayout(btn_layout)
 
-    def add_item(self):
-        w = InvoiceItemWidget(products_list=self.products)
-        w.item_changed.connect(self._update_totals)
-        w.remove_requested.connect(self._remove_item)
-        self.item_widgets.append(w)
+    def add_item_row(self):
+        item = InvoiceItemWidget(products_list=self.products)
+        item.item_changed.connect(self._update_totals)
+        item.remove_requested.connect(self._remove_item)
+        self.item_widgets.append(item)
         insert_pos = self.items_layout.count() - 1
-        self.items_layout.insertWidget(insert_pos, w)
+        self.items_layout.insertWidget(insert_pos, item)
 
-    def _remove_item(self, w):
+    def _remove_item(self, widget):
         if len(self.item_widgets) <= 1:
             return
-        self.item_widgets.remove(w)
-        self.items_layout.removeWidget(w)
-        w.deleteLater()
+        self.item_widgets.remove(widget)
+        self.items_layout.removeWidget(widget)
+        widget.deleteLater()
         self._update_totals()
 
     def _update_totals(self):
-        party_id = self.cmb_party.currentData()
-        party = self.parties_map.get(party_id) if hasattr(self, 'parties_map') else None
-        party_sc = ""
-        if party:
-            party_sc = party.get("state_code") or ""
-            if not party_sc and party.get("gstin") and len(party.get("gstin")) >= 2 and party.get("gstin")[:2].isdigit():
-                party_sc = party.get("gstin")[:2]
-
-        tax_mode = self.tax_mode_group.checkedId()
-        if tax_mode == 1:
-            is_interstate = False
-        elif tax_mode == 2:
-            is_interstate = True
-        else:
-            # Auto mode
-            comp_sc = getattr(self, "company_state_code", "27")
-            if party_sc and comp_sc:
-                is_interstate = (party_sc.strip() != comp_sc.strip())
-            else:
-                is_interstate = False
-
-        t_type = TransactionType.INTER_STATE if is_interstate else TransactionType.INTRA_STATE
-
-        subtotal = Decimal("0.00")
-        cgst_total = Decimal("0.00")
-        sgst_total = Decimal("0.00")
-        igst_total = Decimal("0.00")
-
+        subtotal = tax = Decimal("0")
         for w in self.item_widgets:
             d = w.get_item_data()
-            qty = Decimal(d.get("quantity", "1"))
-            rate = Decimal(d.get("unit_price", "0"))
-            disc = Decimal(d.get("discount_pct", "0"))
-            gst_val = d.get("gst_rate_pct")
-            if gst_val is None or str(gst_val).strip() == "":
-                gst_val = d.get("tax_rate", "0")
-            gst = Decimal(str(gst_val))
+            qty = Decimal(d["quantity"])
+            rate = Decimal(d["unit_price"])
+            disc = Decimal(d["discount_pct"])
+            gst = Decimal(d["gst_rate_pct"] or "0")
+            base = qty * rate
+            after_disc = base * (1 - disc / 100)
+            item_tax = after_disc * gst / 100
+            subtotal += after_disc
+            tax += item_tax
 
-            res = GSTEngine.calculate_line_item(qty, rate, disc, gst, t_type)
+        total = subtotal + tax
+        self.lbl_subtotal.setText(f"Subtotal: ₹{subtotal:,.2f}")
+        self.lbl_tax.setText(f"Tax: ₹{tax:,.2f}")
+        self.lbl_grand.setText(f"Total: ₹{total:,.2f}")
 
-            subtotal += res["taxable_value"]
-            cgst_total += res["cgst_amt"]
-            sgst_total += res["sgst_amt"]
-            igst_total += res["igst_amt"]
+    def load_data(self, ch):
+        for i in range(self.cmb_party.count()):
+            if self.cmb_party.itemData(i) == ch.get("party_id"):
+                self.cmb_party.setCurrentIndex(i)
+                break
+        self.txt_ch_number.setText(ch.get("challan_number", ""))
+        d = ch.get("challan_date")
+        if d:
+            self.dt_date.setDate(QDate(d.year, d.month, d.day))
 
-        tax_total = cgst_total + sgst_total + igst_total
-        grand_total = subtotal + tax_total
-
-        self.lbl_subtotal.setText(f"Subtotal: ₹{float(subtotal):,.2f}")
-        if is_interstate:
-            self.lbl_igst.setVisible(True)
-            self.lbl_cgst.setVisible(False)
-            self.lbl_sgst.setVisible(False)
-            self.lbl_igst.setText(f"IGST: ₹{float(igst_total):,.2f}")
+        if ch.get("is_interstate"):
+            self.cmb_tax_mode.setCurrentIndex(1)
         else:
-            self.lbl_igst.setVisible(False)
-            self.lbl_cgst.setVisible(True)
-            self.lbl_sgst.setVisible(True)
-            self.lbl_cgst.setText(f"CGST: ₹{float(cgst_total):,.2f}")
-            self.lbl_sgst.setText(f"SGST: ₹{float(sgst_total):,.2f}")
+            self.cmb_tax_mode.setCurrentIndex(0)
 
-        self.lbl_tax.setText(f"Tax: ₹{float(tax_total):,.2f}")
-        self.lbl_grand.setText(f"Total: ₹{float(grand_total):,.2f}")
+        ch_type = ch.get("challan_type", "supply")
+        if ch_type == "jobwork":
+            self.rb_jobwork.setChecked(True)
+        elif ch_type == "other":
+            self.rb_other.setChecked(True)
+        else:
+            self.rb_supply.setChecked(True)
+
+        self.txt_shipping_address.setPlainText(ch.get("shipping_address", "") or "")
+        self.txt_transporter.setText(ch.get("transporter_name", "") or "")
+        self.txt_vehicle_no.setText(ch.get("vehicle_number", "") or "")
+        self.txt_lr_no.setText(ch.get("lr_no", "") or "")
+        self.txt_eway_bill.setText(ch.get("eway_bill_no", "") or "")
+        self.txt_destination.setText(ch.get("destination", "") or "")
+        self.txt_notes.setPlainText(ch.get("notes", "") or "")
+
+        for w in list(self.item_widgets):
+            self.items_layout.removeWidget(w)
+            w.deleteLater()
+        self.item_widgets.clear()
+
+        for it in ch.get("items", []):
+            widget = InvoiceItemWidget(products_list=self.products)
+            widget.set_item_data(it)
+            widget.item_changed.connect(self._update_totals)
+            widget.remove_requested.connect(self._remove_item)
+            self.item_widgets.append(widget)
+            self.items_layout.insertWidget(self.items_layout.count() - 1, widget)
+
+        self._update_totals()
 
     def get_data(self):
         qd = self.dt_date.date()
-        items = [w.get_item_data() for w in self.item_widgets]
-        tax_mode = self.tax_mode_group.checkedId()
+        dt_val = date(qd.year(), qd.month(), qd.day())
+
+        ch_type = "supply"
+        if self.rb_jobwork.isChecked():
+            ch_type = "jobwork"
+        elif self.rb_other.isChecked():
+            ch_type = "other"
+
+        items = []
+        subtotal = tax = Decimal("0")
+        is_inter = self.cmb_tax_mode.currentIndex() == 1
+
+        for w in self.item_widgets:
+            d = w.get_item_data()
+            qty = Decimal(d["quantity"])
+            rate = Decimal(d["unit_price"])
+            disc = Decimal(d["discount_pct"])
+            gst = Decimal(d["gst_rate_pct"] or "0")
+            base = qty * rate
+            after_disc = base * (1 - disc / 100)
+            item_tax = after_disc * gst / 100
+            cgst = sgst = Decimal("0")
+            igst = Decimal("0")
+            if is_inter:
+                igst = item_tax
+            else:
+                cgst = item_tax / 2
+                sgst = item_tax / 2
+
+            subtotal += after_disc
+            tax += item_tax
+
+            items.append({
+                "product_id": d.get("product_id"),
+                "item_description": d["item_description"],
+                "hsn_code": d.get("hsn_code", ""),
+                "quantity": float(qty),
+                "unit": d.get("unit", "PCS"),
+                "unit_price": float(rate),
+                "discount_pct": float(disc),
+                "taxable_amount": float(after_disc),
+                "gst_rate_pct": float(gst),
+                "cgst_amount": float(cgst),
+                "sgst_amount": float(sgst),
+                "igst_amount": float(igst),
+                "total_amount": float(after_disc + item_tax),
+            })
+
         return {
             "ch_data": {
                 "party_id": self.cmb_party.currentData(),
-                "challan_number": self.txt_challan_number.text().strip() or None,
-                "challan_date": date(qd.year(), qd.month(), qd.day()),
-                "status": self.cmb_status.currentText(),
-                "tax_mode": tax_mode,
-                "transport_details": self.txt_transport.text().strip(),
-                "notes": self.txt_notes.toPlainText().strip()
+                "challan_number": self.txt_ch_number.text().strip() or None,
+                "challan_date": dt_val,
+                "challan_type": ch_type,
+                "is_interstate": is_inter,
+                "subtotal": float(subtotal),
+                "tax_amount": float(tax),
+                "total_amount": float(subtotal + tax),
+                "notes": self.txt_notes.toPlainText(),
+                "shipping_address": self.txt_shipping_address.toPlainText(),
+                "transporter_name": self.txt_transporter.text(),
+                "vehicle_number": self.txt_vehicle_no.text(),
+                "lr_no": self.txt_lr_no.text(),
+                "eway_bill_no": self.txt_eway_bill.text(),
+                "destination": self.txt_destination.text(),
             },
             "items_data": items,
         }
 
-    def populate(self, data):
-        # Challan number
-        self.txt_challan_number.setText(data.get("challan_number", "") or "")
-        
-        # Date
-        if data.get("challan_date"):
-            d = data["challan_date"]
-            if hasattr(d, 'year'):
-                self.dt_date.setDate(QDate(d.year, d.month, d.day))
-
-        # Party
-        party_id = data.get("party_id")
-        for i in range(self.cmb_party.count()):
-            if self.cmb_party.itemData(i) == party_id:
-                self.cmb_party.setCurrentIndex(i)
-                break
-
-        # Tax mode
-        if "tax_mode" in data:
-            tax_mode = data["tax_mode"]
-        else:
-            tax_mode = 2 if data.get("is_interstate") else 1
-
-        if tax_mode == 1:
-            self.rb_intra.setChecked(True)
-        elif tax_mode == 2:
-            self.rb_inter.setChecked(True)
-        else:
-            self.rb_auto.setChecked(True)
-
-        # Status
-        self.cmb_status.setCurrentText(data.get("status", "sent"))
-
-        # Transport and notes
-        self.txt_transport.setText(data.get("transport_details", "") or "")
-        self.txt_notes.setPlainText(data.get("notes", "") or "")
-
-        # Items
-        items = data.get("items", [])
-        if items:
-            while len(self.item_widgets) > 1:
-                self._remove_item(self.item_widgets[-1])
-            self.item_widgets[0].populate_item(items[0])
-            for it in items[1:]:
-                self.add_item()
-                self.item_widgets[-1].populate_item(it)
-        self._update_totals()
-
 
 class ChallanView(QWidget):
+    """Delivery Challan list and management view."""
     navigate_to = Signal(str, dict)
 
     def __init__(self, parent=None):
-        super().__init__(parent); self.init_ui()
+        super().__init__(parent)
+        self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout(self); layout.setContentsMargins(24, 24, 24, 24); layout.setSpacing(16)
-        header = QHBoxLayout()
-        tb = QVBoxLayout(); tb.setSpacing(4)
-        lbl = QLabel("Delivery Challans"); lbl.setStyleSheet("font-size: 20px; font-weight: 600; color: #1B1B18;")
-        tb.addWidget(lbl)
-        ls = QLabel("Create and track delivery challans"); ls.setStyleSheet("font-size: 12px; color: #6B6558;")
-        tb.addWidget(ls); header.addLayout(tb); header.addStretch()
-        bn = QPushButton("+ New Challan"); bn.setObjectName("PrimaryBtn"); bn.setFixedHeight(36)
-        bn.clicked.connect(self.create_challan); header.addWidget(bn)
-        br = QPushButton("Refresh"); br.setFixedHeight(36); br.clicked.connect(self.load_data); header.addWidget(br)
-        layout.addLayout(header)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(16)
 
-        ff = QFrame(); ff.setObjectName("Card"); fl = QHBoxLayout(ff); fl.setContentsMargins(12, 8, 12, 8)
-        self.inp_search = QLineEdit(); self.inp_search.setPlaceholderText("Search...")
-        self.inp_search.textChanged.connect(self.load_data); fl.addWidget(self.inp_search, 2)
-        layout.addWidget(ff)
+        # Header
+        self.header_widget = PageHeaderWidget(
+            title="Delivery Challans",
+            subtitle="Create and track goods delivery challans",
+            action_text="New Challan",
+            action_icon="plus",
+            action_callback=self.create_challan
+        )
+        btn_refresh = QPushButton("Refresh")
+        btn_refresh.setIcon(theme_manager.get_icon("refresh", size=16))
+        btn_refresh.setProperty("variant", "secondary")
+        btn_refresh.setFixedHeight(36)
+        btn_refresh.clicked.connect(self.load_data)
+        self.header_widget.add_custom_action(btn_refresh)
+        layout.addWidget(self.header_widget)
 
-        self.table = QTableWidget(); self.table.setColumnCount(6)
+        # Filter bar
+        filter_frame = CardFrame()
+        fl = QHBoxLayout(filter_frame)
+        fl.setContentsMargins(12, 8, 12, 8)
+        self.inp_search = QLineEdit()
+        self.inp_search.setPlaceholderText("Search challans by number, party name...")
+        self.inp_search.textChanged.connect(self.load_data)
+        fl.addWidget(self.inp_search, 2)
+        layout.addWidget(filter_frame)
+
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(["Challan #", "Date", "Party", "Tax (₹)", "Total (₹)", "Status"])
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        for i in [0, 1, 3, 4, 5]: self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeToContents)
-        self.table.verticalHeader().setDefaultSectionSize(36); self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows); self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        for i in [0, 1, 3, 4, 5]:
+            self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        self.table.verticalHeader().setDefaultSectionSize(36)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.doubleClicked.connect(self.edit_challan)
         layout.addWidget(self.table, 1)
 
+        # Bottom bar
         bottom = QHBoxLayout()
         self.lbl_count = QLabel("0 challans")
-        self.lbl_count.setStyleSheet("color: #6B6558;")
+        self.lbl_count.setFont(theme_manager.get_font("caption"))
         bottom.addWidget(self.lbl_count)
         bottom.addStretch()
 
         btn_edit = QPushButton("Edit")
-        btn_edit.setObjectName("SecondaryBtn")
+        btn_edit.setIcon(theme_manager.get_icon("edit", size=16))
+        btn_edit.setProperty("variant", "secondary")
         btn_edit.clicked.connect(self.edit_challan)
         bottom.addWidget(btn_edit)
 
-        btn_print = QPushButton("Print")
-        btn_print.setObjectName("PrimaryBtn")
+        btn_print = QPushButton("Print PDF")
+        btn_print.setIcon(theme_manager.get_icon("printer", size=16))
+        btn_print.setProperty("variant", "secondary")
         btn_print.clicked.connect(self.print_challan)
         bottom.addWidget(btn_print)
 
         btn_del = QPushButton("Delete")
-        btn_del.setObjectName("DestructiveBtn")
+        btn_del.setIcon(theme_manager.get_icon("trash", token_color="danger", size=16))
+        btn_del.setProperty("variant", "danger")
         btn_del.clicked.connect(self.delete_challan)
         bottom.addWidget(btn_del)
+
         layout.addLayout(bottom)
         self.load_data()
 
     def load_data(self):
         search = self.inp_search.text().strip() if hasattr(self, 'inp_search') else None
         challans = challan_service.get_all_challans(search=search)
-        self.table.setRowCount(len(challans)); mono = QFont("Consolas", 10)
+        self.table.setRowCount(len(challans))
+
         for row, ch in enumerate(challans):
             self.table.setItem(row, 0, QTableWidgetItem(ch["challan_number"]))
-            d = ch.get("challan_date", ""); d_str = d.strftime("%d-%m-%Y") if hasattr(d, 'strftime') else str(d)
-            it_d = QTableWidgetItem(d_str); it_d.setFont(mono); self.table.setItem(row, 1, it_d)
+            d = ch.get("challan_date", "")
+            d_str = d.strftime("%d-%m-%Y") if hasattr(d, 'strftime') else str(d)
+            it_d = QTableWidgetItem(d_str)
+            self.table.setItem(row, 1, it_d)
+
             self.table.setItem(row, 2, QTableWidgetItem(ch.get("party_name", "")))
-            for col, key in [(3, "tax_amount"), (4, "total_amount")]:
-                it = QTableWidgetItem(f"₹{ch.get(key, 0):,.2f}"); it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                it.setFont(mono); self.table.setItem(row, col, it)
-            it_s = QTableWidgetItem(ch.get("status", "").upper()); self.table.setItem(row, 5, it_s)
+
+            tax_val = float(ch.get("tax_amount", 0))
+            it_tax = QTableWidgetItem(f"₹{tax_val:,.2f}")
+            it_tax.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.table.setItem(row, 3, it_tax)
+
+            total_val = float(ch.get("total_amount", 0))
+            it_tot = QTableWidgetItem(f"₹{total_val:,.2f}")
+            it_tot.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.table.setItem(row, 4, it_tot)
+
+            status = ch.get("status", "open")
+            badge = StatusBadgeLabel(status.upper(), status=status)
+            self.table.setCellWidget(row, 5, badge)
+
             self.table.item(row, 0).setData(Qt.UserRole, ch["id"])
+
         self.lbl_count.setText(f"{len(challans)} challans")
 
     def create_challan(self):
@@ -438,48 +509,65 @@ class ChallanView(QWidget):
             data = dlg.get_data()
             try:
                 challan_service.create_challan(data["ch_data"], data["items_data"])
-                self.load_data(); QMessageBox.information(self, "Success", "Challan created!")
-            except Exception as e: QMessageBox.critical(self, "Error", str(e))
+                self.load_data()
+                ThemedMessageBox.information(self, "Success", "Challan created!")
+            except Exception as e:
+                ThemedMessageBox.critical(self, "Error", str(e))
 
     def delete_challan(self):
         row = self.table.currentRow()
-        if row < 0: return
+        if row < 0:
+            return
         ch_id = self.table.item(row, 0).data(Qt.UserRole)
-        if QMessageBox.question(self, "Delete", "Delete this challan?") == QMessageBox.Yes:
-            challan_service.delete_challan(ch_id); self.load_data()
+        if ThemedMessageBox.question(self, "Delete", "Delete this challan?"):
+            challan_service.delete_challan(ch_id)
+            self.load_data()
 
     def edit_challan(self):
         row = self.table.currentRow()
-        if row < 0: return
+        if row < 0:
+            return
         ch_id = self.table.item(row, 0).data(Qt.UserRole)
         ch_data = challan_service.get_challan_by_id(ch_id)
-        if not ch_data: return
+        if not ch_data:
+            return
         dlg = ChallanFormDialog(ch_data=ch_data, parent=self)
         if dlg.exec() == QDialog.Accepted:
             data = dlg.get_data()
             try:
                 challan_service.update_challan(ch_id, data["ch_data"], data["items_data"])
                 self.load_data()
-                QMessageBox.information(self, "Success", "Challan updated!")
+                ThemedMessageBox.information(self, "Success", "Challan updated!")
             except Exception as e:
-                QMessageBox.critical(self, "Error", str(e))
+                ThemedMessageBox.critical(self, "Error", str(e))
 
     def print_challan(self):
         row = self.table.currentRow()
         if row < 0:
-            QMessageBox.information(self, "Info", "Select a challan to print.")
+            ThemedMessageBox.information(self, "Info", "Select a challan to print.")
             return
+
         ch_id = self.table.item(row, 0).data(Qt.UserRole)
         ch_data = challan_service.get_challan_by_id(ch_id)
-        if not ch_data: return
+        if not ch_data:
+            return
+
+        total_val = float(ch_data.get('total_amount', 0) or 0)
+        eway_num = (ch_data.get('eway_bill_no') or '').strip()
+        if total_val > 50000 and not eway_num:
+            ThemedMessageBox.warning(
+                self,
+                "E-Way Bill Advisory (Rule 138 CGST)",
+                f"Consignment total (₹{total_val:,.2f}) exceeds ₹50,000 and no E-Way Bill Number is recorded.\n\n"
+                "Under Rule 138 of the CGST Rules, an E-Way Bill is recommended/mandatory for goods movement.\n"
+                "You may proceed to print the Delivery Challan."
+            )
 
         try:
             from app.services.billing.challan_pdf_generator import ChallanPDFGenerator
             from app.database.connection import get_session
             from app.database.models import CompanyProfile
             from app.config import EXPORTS_DIR
-            import os
-            import subprocess
 
             generator = ChallanPDFGenerator()
 
@@ -490,42 +578,56 @@ class ChallanView(QWidget):
                     company_info = {
                         'name': comp.name or '',
                         'address': comp.address or '',
-                        'gstin': comp.gstin or '',
+                        'city': comp.city or '',
                         'state': comp.state or '',
+                        'state_code': comp.state_code or '',
+                        'pincode': comp.pincode or '',
+                        'gstin': comp.gstin or '',
+                        'pan': comp.pan or '',
                         'phone': comp.phone or '',
                         'email': comp.email or '',
                     }
 
             is_interstate = ch_data.get('is_interstate', False)
+            tax_mode_str = 'inter_state' if is_interstate else 'intra_state'
+
+            qd = ch_data.get('challan_date', '')
+            qd_str = qd.strftime('%d-%m-%Y') if hasattr(qd, 'strftime') else str(qd or '')
 
             pdf_data = {
-                'challan_number': ch_data['challan_number'],
-                'date': ch_data['challan_date'].strftime('%d-%m-%Y') if hasattr(ch_data['challan_date'], 'strftime') else str(ch_data['challan_date']),
-                'is_interstate': is_interstate,
+                'document_title': 'DELIVERY CHALLAN',
+                'doc_no_label': 'Challan No.',
+                'sub_title': '(TRANSPORT OF GOODS)',
+                'invoice_number': ch_data['challan_number'],
+                'date': qd_str,
+                'tax_mode': tax_mode_str,
                 'company': company_info,
                 'customer': {
                     'name': ch_data.get('party_name', ''),
                     'address': ch_data.get('party_address', ''),
                     'gstin': ch_data.get('party_gstin', ''),
                     'state': ch_data.get('party_state', ''),
-                    'phone': ch_data.get('party_phone', ''),
-                    'shipping_address': ch_data.get('party_address', ''),
+                    'phone': ch_data.get('party_phone', '')
                 },
                 'logistics': {
-                    'dispatched_through': ch_data.get('transport_details', ''),
-                    'vehicle_number': '',
-                    'dispatch_doc_no': '',
-                    'waybill_no': '',
-                    'destination': '',
+                    'dispatch_doc_no': ch_data.get('lr_no', ''),
+                    'waybill_no': ch_data.get('eway_bill_no', ''),
+                    'dispatched_through': ch_data.get('transporter_name', ''),
+                    'destination': ch_data.get('destination', ''),
+                    'payment_terms': ch_data.get('terms_and_conditions', ''),
+                    'po_date': '',
+                    'buyer_order_no': '',
+                    'terms_delivery': ''
                 },
-                'transport_details': ch_data.get('transport_details', ''),
+                'consignee': {
+                    'address': ch_data.get('shipping_address', '')
+                },
                 'items': [],
                 'totals': {
                     'taxable_amount': float(ch_data.get('subtotal', 0)),
-                    'cgst_amount': float(ch_data.get('cgst_total', 0)),
-                    'sgst_amount': float(ch_data.get('sgst_total', 0)),
-                    'igst_amount': float(ch_data.get('igst_total', 0)),
-                    'tax_amount': float(ch_data.get('tax_amount', 0)),
+                    'cgst_amount': float(ch_data.get('tax_amount', 0)/2 if not is_interstate else 0),
+                    'sgst_amount': float(ch_data.get('tax_amount', 0)/2 if not is_interstate else 0),
+                    'igst_amount': float(ch_data.get('tax_amount', 0) if is_interstate else 0),
                     'grand_total': float(ch_data.get('total_amount', 0)),
                 }
             }
@@ -533,11 +635,8 @@ class ChallanView(QWidget):
             for item in ch_data.get('items', []):
                 qty = float(item.get('quantity', 0))
                 unit_price = float(item.get('unit_price', 0))
-                tax_rate = float(item.get('tax_rate', 0))
-                cgst_amt = float(item.get('cgst_amount', 0))
-                sgst_amt = float(item.get('sgst_amount', 0))
-                igst_amt = float(item.get('igst_amount', 0))
-                tax_amt = cgst_amt + sgst_amt + igst_amt
+                gst_rate = float(item.get('gst_rate_pct', 0))
+                item_tax_amount = float(item.get('tax_amount', 0))
 
                 pdf_data['items'].append({
                     'product_name': item.get('item_description', ''),
@@ -546,14 +645,12 @@ class ChallanView(QWidget):
                     'quantity': qty,
                     'unit': item.get('unit', 'PCS'),
                     'unit_price': unit_price,
-                    'tax_rate': tax_rate,
-                    'tax_amount': tax_amt,
-                    'cgst_amount': cgst_amt,
-                    'sgst_amount': sgst_amt,
-                    'igst_amount': igst_amt,
+                    'tax_rate': gst_rate,
+                    'tax_amount': item_tax_amount,
                 })
 
-            filename = os.path.join(str(EXPORTS_DIR), f"challan_{ch_data.get('challan_number', 'DRAFT').replace('/', '-')}.pdf")
+            safe_num = ch_data.get('challan_number', 'DRAFT').replace('/', '-')
+            filename = os.path.join(str(EXPORTS_DIR), f"challan_{safe_num}.pdf")
             pdf_path = generator.generate_challan(pdf_data, filename=filename)
 
             if os.name == 'nt':
@@ -562,4 +659,4 @@ class ChallanView(QWidget):
                 subprocess.call(('open', pdf_path))
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not generate PDF: {str(e)}")
+            ThemedMessageBox.critical(self, "Error", f"Could not generate PDF: {str(e)}")
