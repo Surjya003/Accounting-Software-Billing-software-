@@ -15,14 +15,14 @@ class CompanyProfile(Base):
     __tablename__ = "company_profile"
 
     id = Column(Integer, primary_key=True)
-    name = Column(String(200), nullable=False, default="My Trading Company")
+    name = Column(String(200), nullable=False, default="")
     trade_name = Column(String(200), nullable=True)
     gstin = Column(String(15), nullable=True)
     pan = Column(String(10), nullable=True)
     address = Column(Text, nullable=True)
     city = Column(String(100), nullable=True)
-    state = Column(String(100), nullable=True, default="Maharashtra")
-    state_code = Column(String(2), nullable=True, default="27")
+    state = Column(String(100), nullable=True, default=None)
+    state_code = Column(String(2), nullable=True, default=None)
     pincode = Column(String(10), nullable=True)
     phone = Column(String(20), nullable=True)
     email = Column(String(100), nullable=True)
@@ -80,8 +80,8 @@ class Party(Base):
     
     address = Column(Text, nullable=True)
     city = Column(String(100), nullable=True)
-    state = Column(String(100), nullable=True, default="Maharashtra")
-    state_code = Column(String(2), nullable=True, default="27")
+    state = Column(String(100), nullable=True, default=None)
+    state_code = Column(String(2), nullable=True, default=None)
     pincode = Column(String(10), nullable=True)
 
     # Separate Shipping Address

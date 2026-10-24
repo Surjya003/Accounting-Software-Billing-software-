@@ -26,6 +26,7 @@ from app.ui.theme.widgets import (
     PageHeaderWidget, CardFrame, StatusBadgeLabel, ThemedMessageBox,
     configure_dialog_window_flags
 )
+from app.ui.save_dialog import execute_export_pipeline
 
 
 class QuotationItemWidget(QFrame):
@@ -767,11 +768,11 @@ class QuotationView(QWidget):
         btn_edit.clicked.connect(lambda: self.edit_quotation())
         bottom.addWidget(btn_edit)
 
-        btn_print = QPushButton("Print PDF")
-        btn_print.setIcon(theme_manager.get_icon("printer", size=16))
-        btn_print.setProperty("variant", "secondary")
-        btn_print.clicked.connect(self.print_quotation)
-        bottom.addWidget(btn_print)
+        self.btn_print = QPushButton("Print PDF")
+        self.btn_print.setIcon(theme_manager.get_icon("printer", size=16))
+        self.btn_print.setProperty("variant", "secondary")
+        self.btn_print.clicked.connect(self.print_quotation)
+        bottom.addWidget(self.btn_print)
 
         btn_del = QPushButton("Delete")
         btn_del.setIcon(theme_manager.get_icon("trash", token_color="danger", size=16))
@@ -1027,13 +1028,19 @@ class QuotationView(QWidget):
                 })
 
             safe_num = q_data.get('quotation_number', 'DRAFT').replace('/', '-')
-            filename = os.path.join(str(EXPORTS_DIR), f"quotation_{safe_num}.pdf")
-            pdf_path = generator.generate_quotation(pdf_data, filename=filename)
+            p_name = q_data.get('party_name', 'Customer')
+            suggested = f"Quotation_{safe_num}_{p_name}"
 
-            if os.name == 'nt':
-                os.startfile(pdf_path)
-            else:
-                subprocess.call(('open', pdf_path))
+            def _generate(out_p):
+                return generator.generate_quotation(pdf_data, filename=str(out_p))
+
+            execute_export_pipeline(
+                parent=self,
+                suggested_name=suggested,
+                kind="pdf",
+                generator_fn=_generate,
+                trigger_button=getattr(self, "btn_print", None)
+            )
 
         except Exception as e:
             ThemedMessageBox.critical(self, "Error", f"Could not generate Quotation PDF: {str(e)}")

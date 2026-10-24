@@ -63,6 +63,9 @@ def run_legacy_n_plus_1_pnl(session, start_date, end_date):
 
 
 def test_defect_1_reproduction_and_current_benchmark():
+    db_p = Path(STRESS_DB)
+    if not db_p.is_file() or db_p.stat().st_size < 10000:
+        pytest.skip(f"Stress test database {STRESS_DB} not present; skipping manual benchmark.")
     engine = create_engine(f"sqlite:///{STRESS_DB}", connect_args={"check_same_thread": False, "timeout": 30.0})
     Session = sessionmaker(bind=engine)
     

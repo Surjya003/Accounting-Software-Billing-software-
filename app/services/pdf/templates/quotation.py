@@ -80,9 +80,9 @@ def _build_quotation_story(data: Dict[str, Any]) -> List[Any]:
     logo_img = load_safe_image(comp.get("logo_path"), max_w_pt=75.0, max_h_pt=40.0)
 
     comp_info_lines = [
-        Paragraph(f"<b>{escape_xml(comp.get('name', 'Company Name'))}</b>", make_p(font_size=FS_LETTERHEAD, bold=True, color=COLOR_NAVY, leading=FS_LETTERHEAD + 2)),
+        Paragraph(f"<b>{escape_xml(comp.get('name') or '')}</b>", make_p(font_size=FS_LETTERHEAD, bold=True, color=COLOR_NAVY, leading=FS_LETTERHEAD + 2)),
         Paragraph(escape_xml(comp.get('address', '')), make_p(font_size=FS_BODY, leading=FS_BODY + 2.5)),
-        Paragraph(f"GSTIN: <b>{escape_xml(comp.get('gstin', 'N/A'))}</b> | PAN: <b>{escape_xml(comp.get('pan', 'N/A'))}</b>", make_p(font_size=FS_BODY)),
+        Paragraph(f"GSTIN: <b>{escape_xml(comp.get('gstin') or 'Unregistered')}</b> | PAN: <b>{escape_xml(comp.get('pan') or '-')}</b>", make_p(font_size=FS_BODY)),
         Paragraph(f"Email: {escape_xml(comp.get('email', ''))} | Phone: {escape_xml(comp.get('phone', ''))}", make_p(font_size=FS_BODY)),
     ]
 
@@ -319,7 +319,7 @@ def _build_quotation_story(data: Dict[str, Any]) -> List[Any]:
     seal_img = load_safe_image(comp.get("seal_path"), max_w_pt=50.0, max_h_pt=24.0)
 
     for_company = [
-        Paragraph(f"For <b>{escape_xml(comp.get('name', 'Company'))}</b>", make_p(font_size=FS_BODY, alignment=2)),
+        Paragraph(f"For <b>{escape_xml(comp.get('name') or '')}</b>", make_p(font_size=FS_BODY, alignment=2)),
     ]
     if sig_img or seal_img:
         row_imgs = []

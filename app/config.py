@@ -5,26 +5,46 @@ import os
 from pathlib import Path
 from datetime import date
 
+from app.core.paths import (
+    get_project_root,
+    get_data_dir,
+    get_backup_dir,
+    get_exports_dir,
+    get_logs_dir,
+    get_themes_dir,
+    get_db_path,
+    get_database_uri,
+    resource_path,
+    user_data_dir,
+)
+from app.version import VERSION
+
 # Base directory paths
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
+BASE_DIR = get_project_root()
+DATA_DIR = get_data_dir()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-BACKUP_DIR = BASE_DIR / "backups"
+BACKUP_DIR = get_backup_dir()
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-EXPORTS_DIR = BASE_DIR / "exports"
+EXPORTS_DIR = get_exports_dir()
 EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-DB_PATH = Path(os.environ.get("ACCOUNTING_DB_PATH", str(DATA_DIR / "accounting.db")))
-DATABASE_URI = os.environ.get("ACCOUNTING_DATABASE_URI", f"sqlite:///{DB_PATH}")
+LOGS_DIR = get_logs_dir()
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+THEMES_DIR = get_themes_dir()
+THEMES_DIR.mkdir(parents=True, exist_ok=True)
+
+DB_PATH = get_db_path()
+DATABASE_URI = get_database_uri()
 
 
 # Application Info
-APP_NAME = "BillFlow"
-APP_VERSION = "1.0.0"
+APP_NAME = "BillFlow Suite"
+APP_VERSION = VERSION
 APP_SUBTITLE = "Commercial Party-wise Ledger & Accounting System"
-ORGANIZATION = "Vyapar Software Solutions"
+ORGANIZATION = "Binapani Automation"
 TRIAL_DAYS = 14
 
 # Formatting & Currency

@@ -195,11 +195,11 @@ class MainWindow(QMainWindow):
         # Company Info Header
         comp_vbox = QVBoxLayout()
         comp_vbox.setSpacing(2)
-        self.lbl_comp_name = QLabel("BillFlow Commercial Traders")
+        self.lbl_comp_name = QLabel("")
         self.lbl_comp_name.setObjectName("HeaderTitle")
         self.lbl_comp_name.setProperty("variant", "title")
 
-        self.lbl_comp_gstin = QLabel("GSTIN: 27AABCS1429B1Z8 | FY: 2024-25")
+        self.lbl_comp_gstin = QLabel("")
         self.lbl_comp_gstin.setObjectName("HeaderSubtitle")
         self.lbl_comp_gstin.setProperty("variant", "subtitle")
 
@@ -346,6 +346,13 @@ class MainWindow(QMainWindow):
             "Ready | F1: Debit  F2: Credit  F3: Journal  F4: Cash/Bank  F5: Ledger  F6: Outstanding  F9: Invoice  F10: Products"
         )
 
+        self.refresh_company_header()
+        # First-run redirect to Settings if company profile is incomplete
+        with get_session() as session:
+            comp = session.query(CompanyProfile).first()
+            if not comp or not (comp.name and comp.name.strip()) or not (comp.state and comp.state.strip()):
+                QTimer.singleShot(150, lambda: self.navigate_to("settings"))
+
     def _create_nav_button(self, key: str, label: str, icon_name: str, is_checked: bool) -> QPushButton:
         btn = QPushButton(f"  {label}")
         btn.setObjectName("NavButton")
@@ -458,10 +465,24 @@ class MainWindow(QMainWindow):
     def refresh_company_header(self):
         with get_session() as session:
             comp = session.query(CompanyProfile).first()
-            if comp:
-                self.lbl_comp_name.setText(comp.name or "BillFlow Commercial Traders")
-                gst_str = f"GSTIN: {comp.gstin}" if comp.gstin else "GSTIN: Unregistered"
-                self.lbl_comp_gstin.setText(f"{gst_str} | State: {comp.state or 'Maharashtra'} ({comp.state_code or '27'})")
+            if comp and comp.name and comp.name.strip():
+                self.lbl_comp_name.setText(comp.name)
+                parts = []
+                if comp.gstin and comp.gstin.strip():
+                    parts.append(f"GSTIN: {comp.gstin}")
+                else:
+                    parts.append("GSTIN: Unregistered")
+                if comp.state and comp.state.strip():
+                    st_str = f"State: {comp.state}"
+                    if comp.state_code:
+                        st_str += f" ({comp.state_code})"
+                    parts.append(st_str)
+                if comp.financial_year:
+                    parts.append(f"FY: {comp.financial_year}")
+                self.lbl_comp_gstin.setText(" | ".join(parts) if parts else "")
+            else:
+                self.lbl_comp_name.setText("Company Profile Not Configured")
+                self.lbl_comp_gstin.setText("Please complete your company profile in Settings")
 
     def navigate_to(self, view_name: str, params: dict = None):
         if params is None:

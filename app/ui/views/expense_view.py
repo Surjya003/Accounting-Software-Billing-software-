@@ -96,6 +96,18 @@ class ExpenseView(QWidget):
         btn_filter.clicked.connect(self.load_data)
         filter_box.addWidget(btn_filter)
 
+        self.btn_export_pdf = QPushButton("Export PDF")
+        self.btn_export_pdf.setIcon(theme_manager.get_icon("download", size=16))
+        self.btn_export_pdf.setProperty("variant", "secondary")
+        self.btn_export_pdf.clicked.connect(self.export_pdf)
+        filter_box.addWidget(self.btn_export_pdf)
+
+        self.btn_export_excel = QPushButton("Export Excel")
+        self.btn_export_excel.setIcon(theme_manager.get_icon("download", size=16))
+        self.btn_export_excel.setProperty("variant", "secondary")
+        self.btn_export_excel.clicked.connect(self.export_excel)
+        filter_box.addWidget(self.btn_export_excel)
+
         filter_box.addStretch()
         layout.addWidget(filter_frame)
 
@@ -229,6 +241,34 @@ class ExpenseView(QWidget):
                 ThemedMessageBox.information(self, "Deleted", "Expense entry deleted successfully.")
             except Exception as e:
                 ThemedMessageBox.critical(self, "Error", str(e))
+
+    def export_pdf(self):
+        from app.ui.save_dialog import execute_export_pipeline
+        from app.services.export_service import export_expense_pdf
+        d_from = self.date_from.date().toPython()
+        d_to = self.date_to.date().toPython()
+        cat_id = self.combo_category.currentData()
+        execute_export_pipeline(
+            parent=self,
+            export_fn=lambda out: export_expense_pdf(start_date=d_from, end_date=d_to, category_id=cat_id, output_path=out),
+            suggested_name=f"Expenses_{d_from.strftime('%Y%m%d')}_{d_to.strftime('%Y%m%d')}",
+            kind="pdf",
+            toast_title="Expense Register Exported"
+        )
+
+    def export_excel(self):
+        from app.ui.save_dialog import execute_export_pipeline
+        from app.services.export_service import export_expense_excel
+        d_from = self.date_from.date().toPython()
+        d_to = self.date_to.date().toPython()
+        cat_id = self.combo_category.currentData()
+        execute_export_pipeline(
+            parent=self,
+            export_fn=lambda out: export_expense_excel(start_date=d_from, end_date=d_to, category_id=cat_id, output_path=out),
+            suggested_name=f"Expenses_{d_from.strftime('%Y%m%d')}_{d_to.strftime('%Y%m%d')}",
+            kind="xlsx",
+            toast_title="Expense Register Exported"
+        )
 
 
 class AddExpenseDialog(QDialog):

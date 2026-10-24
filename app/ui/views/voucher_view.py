@@ -28,6 +28,7 @@ from app.ui.theme import theme_manager
 from app.ui.theme.widgets import (
     PageHeaderWidget, CardFrame, StatusBadgeLabel, ThemedMessageBox
 )
+from app.ui.save_dialog import execute_export_pipeline
 
 
 class VoucherEntryView(QWidget):
@@ -530,10 +531,13 @@ class VoucherEntryView(QWidget):
             if print_pdf:
                 v_dict = get_voucher_by_id(created_v.id)
                 if v_dict:
-                    pdf_path = export_invoice_pdf(v_dict)
-                    ThemedMessageBox.information(self, "PDF Generated", f"Invoice PDF exported successfully:\n{pdf_path}")
-                    import os
-                    os.startfile(str(pdf_path))
+                    suggested = f"Voucher_{created_v.voucher_number}_{v_dict.get('party', {}).get('name', 'Party')}"
+                    execute_export_pipeline(
+                        parent=self,
+                        suggested_name=suggested,
+                        kind="pdf",
+                        generator_fn=lambda out_path: export_invoice_pdf(v_dict, output_path=out_path)
+                    )
 
             self.reset_form()
         except Exception as e:

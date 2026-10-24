@@ -16,13 +16,62 @@ from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
 
 from app.config import DATA_DIR, BACKUP_DIR
+from app.core.paths import get_lock_file, get_clock_guard_file, get_data_dir
 from app.database.connection import create_backup
 from app.database.migrations import enforce_backup_retention, check_database_health, verify_backup
 
 logger = logging.getLogger("BillFlow.SystemGuard")
 
-LOCK_FILE = DATA_DIR / ".billflow.lock"
-CLOCK_GUARD_FILE = DATA_DIR / ".time_guard"
+LOCK_FILE = get_lock_file()
+CLOCK_GUARD_FILE = get_clock_guard_file()
+
+WIN32_MUTEX_NAME = "BillFlowSuite_SingleInstance_Mutex"
+_win32_mutex_handle = None
+
+
+def acquire_win32_mutex() -> bool:
+    """
+    Creates and holds a named Win32 mutex for Inno Setup (AppMutex) and OS single-instance detection.
+    """
+    global _win32_mutex_handle
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        ERROR_ALREADY_EXISTS = 183
+        handle = ctypes.windll.kernel32.CreateMutexW(None, False, WIN32_MUTEX_NAME)
+        last_error = ctypes.windll.kernel32.GetLastError()
+        if handle:
+            _win32_mutex_handle = handle
+            atexit.register(release_win32_mutex)
+        if last_error == ERROR_ALREADY_EXISTS:
+            logger.warning(f"Win32 Mutex {WIN32_MUTEX_NAME} already exists (another copy running).")
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to create Win32 mutex: {e}")
+        return True
+
+
+def release_win32_mutex():
+    """Releases the named Win32 mutex."""
+    global _win32_mutex_handle
+    if _win32_mutex_handle and sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.CloseHandle(_win32_mutex_handle)
+        except Exception:
+            pass
+        finally:
+            _win32_mutex_handle = None
+
+
+def _get_active_lock_file() -> Path:
+    return get_lock_file()
+
+
+def _get_active_clock_file() -> Path:
+    return get_clock_guard_file()
 
 
 def is_pid_alive(pid: int) -> bool:
@@ -52,7 +101,7 @@ def is_pid_alive(pid: int) -> bool:
 
 
 class SingleInstanceLock:
-    """Enforces single running application instance using PID-verified lock file."""
+    """Enforces single running application instance using PID-verified lock file and Win32 named mutex."""
     _acquired = False
 
     @classmethod
@@ -61,12 +110,16 @@ class SingleInstanceLock:
         Attempts to acquire the single-instance lock.
         Returns (success: bool, error_message: Optional[str]).
         """
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        lock_file = _get_active_lock_file()
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
         current_pid = os.getpid()
 
-        if LOCK_FILE.exists():
+        # 1. Acquire Win32 named mutex for Inno Setup installer detection
+        mutex_acquired = acquire_win32_mutex()
+
+        if lock_file.exists():
             try:
-                with open(LOCK_FILE, "r", encoding="utf-8") as f:
+                with open(lock_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 locked_pid = data.get("pid")
                 locked_time = data.get("started_at", "Unknown")
@@ -82,7 +135,7 @@ class SingleInstanceLock:
                 logger.warning(f"Unreadable lock file: {e}. Clearing.")
 
             try:
-                LOCK_FILE.unlink(missing_ok=True)
+                lock_file.unlink(missing_ok=True)
             except Exception:
                 pass
 
@@ -93,7 +146,7 @@ class SingleInstanceLock:
                 "started_at": datetime.now().isoformat(),
                 "python_version": sys.version
             }
-            with open(LOCK_FILE, "w", encoding="utf-8") as f:
+            with open(lock_file, "w", encoding="utf-8") as f:
                 json.dump(lock_data, f, indent=2)
             cls._acquired = True
             atexit.register(cls.release)
@@ -104,14 +157,16 @@ class SingleInstanceLock:
     @classmethod
     def release(cls):
         """Releases the lock file if owned by the current process."""
+        release_win32_mutex()
         if not cls._acquired:
             return
+        lock_file = _get_active_lock_file()
         try:
-            if LOCK_FILE.exists():
-                with open(LOCK_FILE, "r", encoding="utf-8") as f:
+            if lock_file.exists():
+                with open(lock_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 if data.get("pid") == os.getpid():
-                    LOCK_FILE.unlink(missing_ok=True)
+                    lock_file.unlink(missing_ok=True)
                     logger.info("Released single-instance application lock.")
         except Exception:
             pass
@@ -128,12 +183,13 @@ class ClockGuard:
         Checks current system time against recorded watermark.
         Returns (is_valid: bool, error_message: Optional[str]).
         """
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        clock_file = _get_active_clock_file()
+        clock_file.parent.mkdir(parents=True, exist_ok=True)
         now = datetime.now()
 
-        if CLOCK_GUARD_FILE.exists():
+        if clock_file.exists():
             try:
-                with open(CLOCK_GUARD_FILE, "r", encoding="utf-8") as f:
+                with open(clock_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 last_seen_str = data.get("last_seen")
                 if last_seen_str:
@@ -156,7 +212,7 @@ class ClockGuard:
 
         # Update watermark
         try:
-            with open(CLOCK_GUARD_FILE, "w", encoding="utf-8") as f:
+            with open(clock_file, "w", encoding="utf-8") as f:
                 json.dump({"last_seen": now.isoformat()}, f, indent=2)
             return True, None
         except Exception as e:

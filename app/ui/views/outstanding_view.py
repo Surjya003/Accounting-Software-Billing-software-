@@ -25,6 +25,7 @@ from app.ui.theme.widgets import (
     PageHeaderWidget, CardFrame, ThemedMessageBox, configure_dialog_window_flags
 )
 from app.ui.async_worker import run_in_background
+from app.ui.save_dialog import execute_export_pipeline
 
 
 class OutstandingTabWidget(QWidget):
@@ -236,47 +237,39 @@ class OutstandingTabWidget(QWidget):
         dlg.exec()
 
     def export_pdf(self):
-        if not self.current_report_data:
+        if not self.current_report_data or not self.current_report_data.get("parties"):
+            ThemedMessageBox.warning(self, "No Data", f"No {self.report_type} records to export.")
             return
 
-        def _on_success(p):
-            ThemedMessageBox.information(self, "Exported", f"Outstanding Ageing PDF saved to:\n{p}")
-            try:
-                os.startfile(str(p))
-            except Exception:
-                pass
+        suggested = f"Outstanding_{self.report_type}_{date.today().strftime('%Y%m%d')}"
 
-        def _on_error(e):
-            ThemedMessageBox.critical(self, "Error", f"Failed to export PDF: {e}")
+        def _generate(out_path):
+            return export_outstanding_pdf(report_data=self.current_report_data, output_path=out_path)
 
-        run_in_background(
-            export_outstanding_pdf,
-            on_result=_on_success,
-            on_error=_on_error,
-            trigger_button=self.btn_pdf,
-            report_data=self.current_report_data
+        execute_export_pipeline(
+            parent=self,
+            suggested_name=suggested,
+            kind="pdf",
+            generator_fn=_generate,
+            trigger_button=self.btn_pdf
         )
 
     def export_excel(self):
-        if not self.current_report_data:
+        if not self.current_report_data or not self.current_report_data.get("parties"):
+            ThemedMessageBox.warning(self, "No Data", f"No {self.report_type} records to export.")
             return
 
-        def _on_success(p):
-            ThemedMessageBox.information(self, "Exported", f"Outstanding Ageing Excel saved to:\n{p}")
-            try:
-                os.startfile(str(p))
-            except Exception:
-                pass
+        suggested = f"Outstanding_{self.report_type}_{date.today().strftime('%Y%m%d')}"
 
-        def _on_error(e):
-            ThemedMessageBox.critical(self, "Error", f"Failed to export Excel: {e}")
+        def _generate(out_path):
+            return export_outstanding_excel(report_data=self.current_report_data, output_path=out_path)
 
-        run_in_background(
-            export_outstanding_excel,
-            on_result=_on_success,
-            on_error=_on_error,
-            trigger_button=self.btn_excel,
-            report_data=self.current_report_data
+        execute_export_pipeline(
+            parent=self,
+            suggested_name=suggested,
+            kind="xlsx",
+            generator_fn=_generate,
+            trigger_button=self.btn_excel
         )
 
 

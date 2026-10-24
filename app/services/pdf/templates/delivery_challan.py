@@ -151,9 +151,9 @@ def _build_challan_story(data: Dict[str, Any], copy_label: str = "ORIGINAL FOR C
 
     consignor_p = Paragraph(
         f"<b>Consignor (Dispatched From):</b><br/>"
-        f"<b>{escape_xml(comp.get('name', 'Company'))}</b><br/>"
+        f"<b>{escape_xml(comp.get('name') or '')}</b><br/>"
         f"{escape_xml(comp.get('address', ''))}<br/>"
-        f"GSTIN: <b>{escape_xml(comp.get('gstin', 'N/A'))}</b> | State: {escape_xml(comp.get('state', ''))}",
+        f"GSTIN: <b>{escape_xml(comp.get('gstin') or 'Unregistered')}</b> | State: {escape_xml(comp.get('state', ''))}",
         make_p(font_size=FS_BODY, leading=FS_BODY + 2.5)
     )
 
@@ -440,7 +440,7 @@ def _build_challan_story(data: Dict[str, Any], copy_label: str = "ORIGINAL FOR C
 
     sig_img = load_safe_image(comp.get("signature_path"), max_w_pt=80.0, max_h_pt=24.0)
     p_auth = [
-        Paragraph(f"for <b>{escape_xml(comp.get('name', 'Company'))}</b>", make_p(font_size=FS_SMALL, alignment=2)),
+        Paragraph(f"for <b>{escape_xml(comp.get('name') or '')}</b>", make_p(font_size=FS_SMALL, alignment=2)),
     ]
     if sig_img:
         p_auth.append(sig_img)

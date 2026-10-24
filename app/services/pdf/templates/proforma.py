@@ -91,9 +91,9 @@ def _build_proforma_story(data: Dict[str, Any]) -> List[Any]:
         Paragraph("<b>PROFORMA INVOICE</b>", make_p(font_size=FS_DOC_TITLE, bold=True, color=COLOR_ACCENT, leading=FS_DOC_TITLE + 2)),
         Paragraph("<i>This is not a tax invoice. Not valid for input tax credit.</i>", make_p(font_size=FS_SUBTITLE, color=COLOR_MUTED, leading=FS_SUBTITLE + 3)),
         Spacer(1, 4),
-        Paragraph(f"<b>{escape_xml(comp.get('name', 'Company Name'))}</b>", make_p(font_size=FS_BODY + 1, bold=True)),
+        Paragraph(f"<b>{escape_xml(comp.get('name') or '')}</b>", make_p(font_size=FS_BODY + 1, bold=True)),
         Paragraph(escape_xml(comp.get('address', '')), make_p(font_size=FS_BODY, leading=FS_BODY + 2.5)),
-        Paragraph(f"GSTIN: <b>{escape_xml(comp.get('gstin', 'N/A'))}</b> | PAN: <b>{escape_xml(comp.get('pan', 'N/A'))}</b>", make_p(font_size=FS_BODY)),
+        Paragraph(f"GSTIN: <b>{escape_xml(comp.get('gstin') or 'Unregistered')}</b> | PAN: <b>{escape_xml(comp.get('pan') or '-')}</b>", make_p(font_size=FS_BODY)),
         Paragraph(f"State: <b>{escape_xml(comp.get('state', ''))}</b> (Code: {escape_xml(comp.get('state_code', '-'))})", make_p(font_size=FS_BODY)),
     ]
 
@@ -153,7 +153,8 @@ def _build_proforma_story(data: Dict[str, Any]) -> List[Any]:
     qr_flowable = None
     if upi_id:
         try:
-            upi_payload = f"upi://pay?pa={upi_id}&pn={comp.get('name', 'Company')}&am={balance_payable:.2f}&cu=INR"
+            comp_name_url = comp.get('name') or ''
+            upi_payload = f"upi://pay?pa={upi_id}&pn={comp_name_url}&am={balance_payable:.2f}&cu=INR"
             qr_widget = QrCodeWidget(upi_payload)
             qr_widget.barWidth = 44.0
             qr_widget.barHeight = 44.0
@@ -384,7 +385,7 @@ def _build_proforma_story(data: Dict[str, Any]) -> List[Any]:
 
     sig_img = load_safe_image(comp.get("signature_path"), max_w_pt=90.0, max_h_pt=30.0)
     sig_content = [
-        Paragraph(f"for <b>{escape_xml(comp.get('name', 'Company'))}</b>", make_p(font_size=FS_BODY, alignment=2)),
+        Paragraph(f"for <b>{escape_xml(comp.get('name') or '')}</b>", make_p(font_size=FS_BODY, alignment=2)),
     ]
     if sig_img:
         sig_content.append(sig_img)

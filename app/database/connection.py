@@ -1,6 +1,7 @@
 """
 Database Engine, Session Management, and Backup Utilities
 """
+import os
 import sqlite3
 import datetime as dt
 import shutil
@@ -60,6 +61,26 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
+
+
+def configure_database(custom_uri: str = None):
+    """Dynamically rebinds engine and SessionLocal to a new database URI."""
+    global engine, SessionLocal
+    from app.core.paths import get_database_uri
+    uri = custom_uri or os.environ.get("ACCOUNTING_DATABASE_URI") or get_database_uri()
+    if engine:
+        try:
+            engine.dispose()
+        except Exception:
+            pass
+    engine = create_engine(
+        uri,
+        echo=False,
+        connect_args={"check_same_thread": False, "timeout": 30.0}
+    )
+    event.listen(engine, "connect", set_sqlite_pragma)
+    SessionLocal.configure(bind=engine)
+    return engine
 
 def init_db():
     """Initializes tables and default company profile if missing."""
@@ -330,22 +351,22 @@ def init_db():
         profile = session.query(CompanyProfile).first()
         if not profile:
             default_profile = CompanyProfile(
-                name="Sita Ram & Sons Traders",
-                trade_name="Sita Ram & Sons",
-                gstin="27AABCS1429B1Z8",
-                pan="AABCS1429B",
-                address="Shop No. 12, Industrial Area Phase II, MIDC",
-                city="Mumbai",
-                state="Maharashtra",
-                state_code="27",
-                pincode="400001",
-                phone="+91 98200 12345",
-                email="contact@sitaramtraders.com",
-                bank_name="State Bank of India",
-                bank_account_no="381928472910",
-                bank_ifsc="SBIN0001234",
-                bank_branch="Fort Mumbai Main Branch",
-                upi_id="sitaramtraders@sbi",
+                name="",
+                trade_name="",
+                gstin="",
+                pan="",
+                address="",
+                city="",
+                state="",
+                state_code="",
+                pincode="",
+                phone="",
+                email="",
+                bank_name="",
+                bank_account_no="",
+                bank_ifsc="",
+                bank_branch="",
+                upi_id="",
                 financial_year="2024-25"
             )
             session.add(default_profile)

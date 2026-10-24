@@ -40,6 +40,13 @@ class DayBookView(QWidget):
             title="Day Book",
             subtitle="Chronological transaction journal and daily ledger"
         )
+        self.btn_pdf = QPushButton("Export PDF")
+        self.btn_pdf.setIcon(theme_manager.get_icon("download", size=16))
+        self.btn_pdf.setProperty("variant", "secondary")
+        self.btn_pdf.setFixedHeight(36)
+        self.btn_pdf.clicked.connect(self.export_pdf)
+        self.header_widget.add_custom_action(self.btn_pdf)
+
         self.btn_excel = QPushButton("Export Excel")
         self.btn_excel.setIcon(theme_manager.get_icon("download", size=16))
         self.btn_excel.setProperty("variant", "secondary")
@@ -185,47 +192,50 @@ class DayBookView(QWidget):
             self.table.setUpdatesEnabled(True)
 
     def print_voucher_pdf(self, vid):
-        def _worker(v_id):
-            v = get_voucher_by_id(v_id)
-            if not v:
-                raise ValueError(f"Voucher {v_id} not found")
-            return export_invoice_pdf(v)
+        from app.ui.save_dialog import execute_export_pipeline
+        v = get_voucher_by_id(vid)
+        if not v:
+            ThemedMessageBox.warning(self, "Not Found", f"Voucher #{vid} not found")
+            return
+        v_num = v.get("voucher_number", f"Voucher_{vid}")
+        party = v.get("party_name", "")
+        sug = f"{v_num}_{party}" if party else str(v_num)
+        execute_export_pipeline(
+            parent=self,
+            export_fn=lambda out: export_invoice_pdf(v, output_path=out),
+            suggested_name=sug,
+            kind="pdf",
+            toast_title="Voucher PDF Exported"
+        )
 
-        def _on_success(p):
-            ThemedMessageBox.information(self, "PDF Exported", f"Invoice PDF generated:\n{p}")
-            try:
-                os.startfile(str(p))
-            except Exception:
-                pass
-
-        def _on_error(e):
-            ThemedMessageBox.critical(self, "Error", f"Failed to generate PDF: {e}")
-
-        run_in_background(
-            _worker,
-            on_result=_on_success,
-            on_error=_on_error,
-            v_id=vid
+    def export_pdf(self):
+        from app.ui.save_dialog import execute_export_pipeline
+        from app.services.export_service import export_daybook_pdf
+        d_from = self.dt_from.date().toPython()
+        d_to = self.dt_to.date().toPython()
+        if not self.current_data or not self.current_data.get("rows"):
+            ThemedMessageBox.warning(self, "No Records", "No Day Book transactions found for the selected period.")
+            return
+        execute_export_pipeline(
+            parent=self,
+            export_fn=lambda out: export_daybook_pdf(daybook_data=self.current_data, output_path=out),
+            suggested_name=f"DayBook_{d_from.strftime('%Y%m%d')}_{d_to.strftime('%Y%m%d')}",
+            kind="pdf",
+            toast_title="Day Book PDF Exported"
         )
 
     def export_excel(self):
-        if not self.current_data:
+        from app.ui.save_dialog import execute_export_pipeline
+        from app.services.export_service import export_daybook_excel
+        d_from = self.dt_from.date().toPython()
+        d_to = self.dt_to.date().toPython()
+        if not self.current_data or not self.current_data.get("rows"):
+            ThemedMessageBox.warning(self, "No Records", "No Day Book transactions found for the selected period.")
             return
-
-        def _on_success(p):
-            ThemedMessageBox.information(self, "Excel Exported", f"Day Book saved to:\n{p}")
-            try:
-                os.startfile(str(p))
-            except Exception:
-                pass
-
-        def _on_error(e):
-            ThemedMessageBox.critical(self, "Error", f"Failed to generate Excel: {e}")
-
-        run_in_background(
-            export_daybook_excel,
-            on_result=_on_success,
-            on_error=_on_error,
-            trigger_button=self.btn_excel,
-            daybook_data=self.current_data
+        execute_export_pipeline(
+            parent=self,
+            export_fn=lambda out: export_daybook_excel(daybook_data=self.current_data, output_path=out),
+            suggested_name=f"DayBook_{d_from.strftime('%Y%m%d')}_{d_to.strftime('%Y%m%d')}",
+            kind="xlsx",
+            toast_title="Day Book Excel Exported"
         )

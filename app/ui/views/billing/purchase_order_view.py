@@ -19,6 +19,7 @@ from app.ui.theme.widgets import (
     PageHeaderWidget, CardFrame, StatusBadgeLabel, ThemedMessageBox,
     configure_dialog_window_flags
 )
+from app.ui.save_dialog import execute_export_pipeline
 
 
 class POFormDialog(QDialog):
@@ -244,11 +245,11 @@ class PurchaseOrderView(QWidget):
         bottom.addWidget(self.lbl_count)
         bottom.addStretch()
 
-        btn_print = QPushButton("Print PO")
-        btn_print.setIcon(theme_manager.get_icon("printer", size=16))
-        btn_print.setProperty("variant", "secondary")
-        btn_print.clicked.connect(self.print_po)
-        bottom.addWidget(btn_print)
+        self.btn_print = QPushButton("Print PO")
+        self.btn_print.setIcon(theme_manager.get_icon("printer", size=16))
+        self.btn_print.setProperty("variant", "secondary")
+        self.btn_print.clicked.connect(self.print_po)
+        bottom.addWidget(self.btn_print)
 
         btn_recv = QPushButton("Mark as Received")
         btn_recv.setIcon(theme_manager.get_icon("check", token_color="success", size=16))
@@ -380,13 +381,20 @@ class PurchaseOrderView(QWidget):
                     "grand_total": float(po.get("total_amount", 0)),
                 }
             }
-            pdf_path = generator.generate_po(po_data)
-            ThemedMessageBox.information(self, "PDF Generated", f"Purchase Order PDF saved to:\n{pdf_path}")
-            import os, subprocess
-            if hasattr(os, "startfile"):
-                os.startfile(pdf_path)
-            else:
-                subprocess.call(("open", pdf_path))
+            safe_num = po.get("po_number", "PO").replace('/', '-')
+            s_name = po.get("supplier_name", "Supplier")
+            suggested = f"PO_{safe_num}_{s_name}"
+
+            def _generate(out_p):
+                return generator.generate_po(po_data, filename=str(out_p))
+
+            execute_export_pipeline(
+                parent=self,
+                suggested_name=suggested,
+                kind="pdf",
+                generator_fn=_generate,
+                trigger_button=getattr(self, "btn_print", None)
+            )
         except Exception as e:
             ThemedMessageBox.critical(self, "Error", f"Failed to generate Purchase Order PDF: {e}")
 

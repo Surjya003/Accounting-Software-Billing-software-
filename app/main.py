@@ -7,6 +7,7 @@ and graceful failure recovery.
 """
 import sys
 import os
+import multiprocessing
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +15,19 @@ from typing import Optional
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+
+# Early console redirection for windowed exe (when sys.stdout/stderr is None)
+if getattr(sys, "frozen", False):
+    try:
+        from app.core.paths import get_logs_dir
+        _log_dir = get_logs_dir()
+        _log_dir.mkdir(parents=True, exist_ok=True)
+        if sys.stdout is None:
+            sys.stdout = open(_log_dir / "stdout.log", "a", encoding="utf-8", buffering=1)
+        if sys.stderr is None:
+            sys.stderr = open(_log_dir / "stderr.log", "a", encoding="utf-8", buffering=1)
+    except Exception:
+        pass
 
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
@@ -26,6 +40,7 @@ from app.core import setup_logging, install_crash_handler, get_logger
 from app.branding import APP_NAME, BRAND_NAME, MAKER_NAME, TAGLINE, VERSION
 from app.ui.splash import SplashScreen, is_splash_enabled, is_reduce_motion_enabled
 from app.ui.theme import theme_manager, ThemedMessageBox, configure_dialog_window_flags
+
 
 
 class LicenseGateDialog(QDialog):
@@ -229,30 +244,85 @@ def run_startup_pipeline(splash: Optional[SplashScreen] = None, custom_steps=Non
     return window
 
 
+def parse_cli_args():
+    """Parses command-line arguments for testing, headless selftest, and custom data paths."""
+    args = {
+        "selftest": False,
+        "no_splash": False,
+        "data_dir": None
+    }
+    idx = 1
+    while idx < len(sys.argv):
+        arg = sys.argv[idx]
+        if arg == "--selftest":
+            args["selftest"] = True
+        elif arg == "--no-splash":
+            args["no_splash"] = True
+        elif arg == "--data-dir":
+            if idx + 1 < len(sys.argv):
+                args["data_dir"] = sys.argv[idx + 1]
+                idx += 1
+        elif arg.startswith("--data-dir="):
+            args["data_dir"] = arg.split("=", 1)[1]
+        idx += 1
+    return args
+
+
 def run_app():
     """Main application lifecycle entry point."""
-    # 0. Initialize Centralized Logging & Crash Protection
+    cli_args = parse_cli_args()
+
+    # 1. Custom Data Directory Override (if specified)
+    if cli_args["data_dir"]:
+        from app.core.paths import set_custom_data_dir
+        set_custom_data_dir(cli_args["data_dir"])
+        from app.database.connection import configure_database
+        configure_database()
+
+    # 2. Headless Automated Self-Test Flag (--selftest)
+    if cli_args["selftest"]:
+        import json
+        from app.core.selftest import run_selftest
+        passed, summary = run_selftest(custom_data_dir=cli_args["data_dir"])
+        print(json.dumps(summary, indent=2))
+        sys.exit(0 if passed else 1)
+
+    # 3. Initialize Centralized Logging & Crash Protection
     setup_logging()
     install_crash_handler()
     logger = get_logger("main")
 
-    # 1. Setup Qt Application
+    # 4. Enforce Single-Instance Lock & Named Win32 Mutex
+    from app.services.system_guard import SingleInstanceLock
+    lock_ok, lock_err = SingleInstanceLock.acquire()
+    if not lock_ok:
+        logger.warning(lock_err)
+        # In GUI mode, show error dialog
+        temp_app = QApplication.instance() or QApplication(sys.argv)
+        ThemedMessageBox.warning(
+            None,
+            "Already Running",
+            f"{APP_NAME} is already running on this computer.\n\nPlease switch to the existing window."
+        )
+        sys.exit(0)
+
+    # 5. Setup Qt Application
     if hasattr(Qt, "HighDpiScaleFactorRoundingPolicy"):
         QApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
         )
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
-    app.setOrganizationName("Vyapar Software Solutions")
+    app.setOrganizationName(BRAND_NAME)
 
-    # 2. Check and show splash immediately BEFORE slow work
+    # 6. Check and show splash immediately BEFORE slow work (unless --no-splash)
     splash = None
-    if is_splash_enabled():
+    if not cli_args["no_splash"] and is_splash_enabled():
         splash = SplashScreen()
         splash.show_splash()
         QApplication.processEvents()
 
-    # 3. Run Startup Pipeline with comprehensive error handling
+    # 7. Run Startup Pipeline with comprehensive error handling
     try:
         window = run_startup_pipeline(splash=splash)
     except Exception as err:
@@ -270,4 +340,6 @@ def run_app():
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     run_app()
+

@@ -89,9 +89,9 @@ def _build_receipt_card(data: Dict[str, Any], copy_name: str = "CUSTOMER COPY") 
     half_w = (FRAME_WIDTH_PT - 10.0) / 2.0
 
     comp_info = [
-        Paragraph(f"<b>{escape_xml(comp.get('name', 'Company Name'))}</b>", make_p(font_size=FS_BODY + 0.5, bold=True)),
+        Paragraph(f"<b>{escape_xml(comp.get('name') or '')}</b>", make_p(font_size=FS_BODY + 0.5, bold=True)),
         Paragraph(escape_xml(comp.get('address', '')), make_p(font_size=FS_SMALL)),
-        Paragraph(f"GSTIN: <b>{escape_xml(comp.get('gstin', 'N/A'))}</b> | Ph: {escape_xml(comp.get('phone', ''))}", make_p(font_size=FS_SMALL)),
+        Paragraph(f"GSTIN: <b>{escape_xml(comp.get('gstin') or 'Unregistered')}</b> | Ph: {escape_xml(comp.get('phone', ''))}", make_p(font_size=FS_SMALL)),
     ]
 
     rcpt_meta = [
@@ -171,7 +171,7 @@ def _build_receipt_card(data: Dict[str, Any], copy_name: str = "CUSTOMER COPY") 
     )
 
     sign_content = [
-        Paragraph(f"for <b>{escape_xml(comp.get('name', 'Company'))}</b>", make_p(font_size=FS_SMALL, alignment=2)),
+        Paragraph(f"for <b>{escape_xml(comp.get('name') or '')}</b>", make_p(font_size=FS_SMALL, alignment=2)),
     ]
     if sig_img:
         sign_content.append(sig_img)

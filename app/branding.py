@@ -9,25 +9,16 @@ MUST NOT import these constants — they must always reflect the customer's own
 CompanyProfile stored in the database.
 """
 from datetime import datetime
-from app.config import APP_VERSION
+from app.version import VERSION
+from app.core.paths import get_asset_path, resource_path
 
 APP_NAME = "BillFlow Suite"
 BRAND_NAME = "Binapani Automation"
 MAKER_NAME = "Surjyakamal Saha"
 TAGLINE = "Offline Accounting & Billing"
-VERSION = APP_VERSION
+VERSION = VERSION
 COPYRIGHT_YEAR = f"2024–{datetime.now().year}"
 CREDIT_LINE = f"Made by {MAKER_NAME}"
 BRAND_FOOTER = "Offline Accounting & Billing"
 
-
-def get_asset_path(relative_path: str):
-    """Resolve an asset path reliably in both dev and PyInstaller frozen bundles."""
-    import sys
-    from pathlib import Path
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        base = Path(sys._MEIPASS)
-    else:
-        base = Path(__file__).resolve().parent.parent
-    return base / relative_path
 

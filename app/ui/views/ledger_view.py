@@ -20,6 +20,7 @@ from app.ui.theme.widgets import (
     PageHeaderWidget, CardFrame, ThemedMessageBox
 )
 from app.ui.async_worker import run_in_background
+from app.ui.save_dialog import execute_export_pipeline
 
 
 class LedgerView(QWidget):
@@ -316,22 +317,20 @@ class LedgerView(QWidget):
             ThemedMessageBox.warning(self, "Warning", "Please select and load a party ledger first.")
             return
 
-        def _on_success(p):
-            ThemedMessageBox.information(self, "PDF Exported", f"Ledger Statement PDF saved to:\n{p}")
-            try:
-                os.startfile(str(p))
-            except Exception:
-                pass
+        p_name = self.current_ledger_data.get("party", {}).get("name", "Party")
+        from_str = self.dt_from.date().toString("yyyyMMdd")
+        to_str = self.dt_to.date().toString("yyyyMMdd")
+        suggested = f"Ledger_{p_name}_{from_str}_to_{to_str}"
 
-        def _on_error(e):
-            ThemedMessageBox.critical(self, "Error", f"Failed to generate PDF: {e}")
+        def _generate(out_path):
+            return export_party_ledger_pdf(ledger_data=self.current_ledger_data, output_path=out_path)
 
-        run_in_background(
-            export_party_ledger_pdf,
-            on_result=_on_success,
-            on_error=_on_error,
-            trigger_button=self.btn_pdf,
-            ledger_data=self.current_ledger_data
+        execute_export_pipeline(
+            parent=self,
+            suggested_name=suggested,
+            kind="pdf",
+            generator_fn=_generate,
+            trigger_button=self.btn_pdf
         )
 
     def export_excel(self):
@@ -339,22 +338,20 @@ class LedgerView(QWidget):
             ThemedMessageBox.warning(self, "Warning", "Please select and load a party ledger first.")
             return
 
-        def _on_success(p):
-            ThemedMessageBox.information(self, "Excel Exported", f"Ledger Statement Excel saved to:\n{p}")
-            try:
-                os.startfile(str(p))
-            except Exception:
-                pass
+        p_name = self.current_ledger_data.get("party", {}).get("name", "Party")
+        from_str = self.dt_from.date().toString("yyyyMMdd")
+        to_str = self.dt_to.date().toString("yyyyMMdd")
+        suggested = f"Ledger_{p_name}_{from_str}_to_{to_str}"
 
-        def _on_error(e):
-            ThemedMessageBox.critical(self, "Error", f"Failed to generate Excel: {e}")
+        def _generate(out_path):
+            return export_party_ledger_excel(ledger_data=self.current_ledger_data, output_path=out_path)
 
-        run_in_background(
-            export_party_ledger_excel,
-            on_result=_on_success,
-            on_error=_on_error,
-            trigger_button=self.btn_excel,
-            ledger_data=self.current_ledger_data
+        execute_export_pipeline(
+            parent=self,
+            suggested_name=suggested,
+            kind="xlsx",
+            generator_fn=_generate,
+            trigger_button=self.btn_excel
         )
 
     def copy_whatsapp_summary(self):

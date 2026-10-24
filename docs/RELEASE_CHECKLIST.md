@@ -1,118 +1,78 @@
-# BillFlow Suite — Pre-Release Verification Checklist
+# BillFlow Suite — Pre-Flight Release Checklist
 
-**Target Release:** v1.0.0 (Production Release)  
-**Branch:** `release/production-ready`  
-**Execution Environment:** Windows 10/11 x64, Python 3.14.3  
+**Release Target:** BillFlow Suite v1.0.0  
+**Publisher:** Binapani Automation  
+**Author:** Surjyakamal Saha  
+**Installer:** `release\BillFlow_Setup_v1.0.0.exe`  
 
----
-
-## 1. Automated Test Suites & Regression Gates
-
-All automated test gates must execute with **100% pass rate** before packaging:
-
-- [ ] **Gate 1: Dependency Vulnerability Audit**
-  ```bash
-  python -m pip_audit -r requirements.txt
-  ```
-  *Requirement:* Exit code 0, 0 known vulnerabilities found.
-
-- [ ] **Gate 2: Core QA Test Suite**
-  ```bash
-  python tests/test_full_qa_suite.py
-  ```
-  *Requirement:* 38/38 tests passing (100%).
-
-- [ ] **Gate 3: Deep Coverage Audit Suite**
-  ```bash
-  pytest tests/test_deep_coverage_audit.py
-  ```
-  *Requirement:* 16/16 scenarios passing (100%).
-
-- [ ] **Gate 4: Phase 3 Data Safety Suite**
-  ```bash
-  pytest tests/test_phase3_data_safety.py
-  ```
-  *Requirement:* 5/5 tests passing (100%).
-
-- [ ] **Gate 5: Phase 4 Security & RBAC Suite**
-  ```bash
-  pytest tests/test_phase4_security_rbac.py
-  ```
-  *Requirement:* 5/5 tests passing (100%).
-
-- [ ] **Gate 6: Performance & Stress Benchmarks**
-  ```bash
-  pytest tests/test_performance_stress.py -v -s
-  ```
-  *Requirement:* 32k record test database, all queries < 2.0s, all exports < 5.0s.
-
-- [ ] **Gate 7: Independent Books Sanity Verification**
-  ```bash
-  python scripts/verify_books.py data/test_accounting.db
-  ```
-  *Requirement:* All 7 mathematical and referential checks pass with Exit Code 0.
-
-- [ ] **Gate 8: Master Release Runner**
-  ```bash
-  python scripts/release_check.py
-  ```
-  *Requirement:* Consolidated runner confirms 100% pass across all modules.
+Before distributing any new release to end users, execute this manual checklist sequentially:
 
 ---
 
-## 2. Document & PDF Visual Review
-
-- [ ] Verify Tax Invoice PDF layout against reference `docs/reference/12-signed.pdf`:
-  - Seller and Buyer GSTIN and State Codes present.
-  - Dates strictly in `DD-MM-YYYY` format.
-  - Amount in words strictly formatted as `"Rupees ... Only"`.
-  - Signature and seal blocks positioned safely in free space without covering text.
-  - Vertical column grid lines stretch continuously to the footer.
-- [ ] Verify Delivery Challan PDF properly suppresses monetary amounts per Rule 55.
-- [ ] Verify Quotation PDF displays validity period and customer enquiry reference.
-- [ ] Verify Proforma Invoice PDF displays distinct Proforma title and bank details.
-- [ ] Verify Credit Note PDF displays Section 34 reference and linked original invoice number.
+### Phase 1: Automated Build & Verification Gate
+- [ ] Run `build_release.bat` from clean working copy.
+- [ ] Verify exit code is 0 and output confirms:
+  - 0 user databases or developer data bundled inside `dist\BillFlow\`
+  - Headless `--selftest` passes with exit code 0 (all 8 PDFs, Excel, encrypted backup)
+  - Inno Setup compiles with 0 errors and 0 warnings
+  - `release\SHA256SUMS.txt` generated
 
 ---
 
-## 3. Packaging & Installer Build
+### Phase 2: Fresh Machine Installation Test
+- [ ] Copy `BillFlow_Setup_v{version}.exe` to a clean Windows 10 or 11 test machine (or Windows Sandbox).
+- [ ] **SmartScreen Note:** When running an unsigned installer, Windows Defender SmartScreen displays *"Windows protected your PC"*.
+  - Click **More info**.
+  - Verify Publisher displays **Binapani Automation** (or *Unknown Publisher* until EV/OV signed).
+  - Click **Run anyway**.
+- [ ] Verify Install Scope selection dialog appears:
+  - Default: *Install for me only (recommended)* (`%LOCALAPPDATA%\Programs\BillFlow Suite\`)
+  - Optional: *Install for all users* (`C:\Program Files\BillFlow Suite\`)
+- [ ] Complete installation wizard and verify:
+  - Desktop shortcut created (if selected)
+  - Start Menu shortcuts created:
+    - *BillFlow Suite*
+    - *Open BillFlow Data Folder*
+    - *Uninstall BillFlow Suite*
+  - Finish page displays credit: *"Made by Surjyakamal Saha"*
+  - "Launch BillFlow Suite" launches application smoothly with brand splash screen.
 
-- [ ] **PyInstaller Build:**
-  ```bash
-  pyinstaller build_exe.spec --clean -y
-  ```
-  *Requirement:* Produces `dist/BillFlow/BillFlow.exe` with no missing DLL or import errors.
-- [ ] **Launch Standalone Binary:**
-  ```bash
-  dist\BillFlow\BillFlow.exe
-  ```
-  *Requirement:* Application launches cleanly, applies enterprise theme, and opens Dashboard.
-- [ ] **Inno Setup Build:**
-  ```bash
-  iscc installer.iss
-  ```
-  *Requirement:* Produces `dist_installer\BillFlow_Setup_v1.0.0.exe`.
+---
+
+### Phase 3: Core Functional Smoke Test
+- [ ] **Initial Database Setup:** App opens on fresh database with no existing customer data.
+- [ ] **Company Profile:** Enter Company Name, GSTIN, Address, Bank Details, and save.
+- [ ] **Party & Product:** Create one Customer party and one Product with GST rate.
+- [ ] **Tax Invoice Generation:** Create an invoice with the product.
+- [ ] **PDF Print / Export:** Generate Tax Invoice PDF; open in PDF viewer and confirm:
+  - Brand/Company details match profile
+  - Vertical grid lines extend to footer
+  - Amount in words displays *"Rupees ... Only"*
+  - Signature and seal blocks are positioned properly
+- [ ] **Other Document Exports:** Generate Quotation, Delivery Challan, Proforma, Credit Note.
+- [ ] **Encrypted Backup:** Go to Settings -> Backup; generate an AES-256-GCM encrypted backup (`*.enc`).
+- [ ] **Disaster Recovery Restore:** Restore the backup and verify data parity.
 
 ---
 
-## 4. Fresh Installation & Smoke Test
-
-- [ ] Install `BillFlow_Setup_v1.0.0.exe` on a clean Windows machine / user profile.
-- [ ] Confirm installation path defaults to `C:\Program Files\BillFlow\` (or `%LOCALAPPDATA%\Programs\BillFlow`).
-- [ ] Confirm active database creates cleanly in `%APPDATA%\BillFlow\data\accounting.db`.
-- [ ] Confirm logs write to `%APPDATA%\BillFlow\logs\billflow.log`.
-- [ ] Perform End-to-End Billing Smoke Test:
-  1. Create Party (Customer).
-  2. Create Product with 18% GST.
-  3. Create Tax Invoice (Verify CGST+SGST math and PDF generation).
-  4. Record Receipt Voucher in Cash & Bank.
-  5. Check Daybook and Trial Balance equality.
-  6. Export GSTR-1 Offline JSON from GST Reports view.
-  7. Generate 1-Click Database Backup in Settings.
-- [ ] Test Uninstallation:
-  - Uninstall via Windows Settings / Control Panel.
-  - Verify executable files in Program Files are removed.
-  - **CRITICAL:** Verify `%APPDATA%\BillFlow\data\accounting.db` and backups are **PRESERVED**.
+### Phase 4: Upgrade & Downgrade Protection Gate
+- [ ] With BillFlow Suite running, attempt to run the installer again.
+  - *Requirement:* Setup alerts that BillFlow Suite is running via `BillFlowSuite_SingleInstance_Mutex` and asks to close it.
+- [ ] Install a newer version over an older version:
+  - *Requirement:* Setup installs smoothly in-place; all customer data in `%APPDATA%\BillFlow\` is preserved; schema migrations execute cleanly.
+- [ ] Attempt to install an older version over a newer version:
+  - *Requirement:* Setup displays downgrade prevention error message and aborts.
 
 ---
-*Sign-off Authority: Lead QA Engineer & Release Manager*
+
+### Phase 5: Uninstallation & Data Preservation Gate
+- [ ] Close BillFlow Suite.
+- [ ] Run uninstaller from Windows Settings -> Installed Apps (or Start Menu shortcut).
+- [ ] At the uninstallation prompt:
+  - Select **NO** to keep financial data.
+- [ ] Verify results:
+  - Application binary folder (`%LOCALAPPDATA%\Programs\BillFlow Suite\` or `C:\Program Files\BillFlow Suite\`) is completely removed.
+  - Shortcuts on Desktop and Start Menu are removed.
+  - Add/Remove Programs registry entry is removed.
+  - **CRITICAL:** `%APPDATA%\BillFlow\` (`data\accounting.db`, `backups\`, `logs\`, `exports\`) remains completely intact.
+- [ ] Test silent `/DELETEDATA=1` parameter on a disposable test machine to confirm complete cleanup when explicitly commanded.

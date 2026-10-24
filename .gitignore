@@ -11,6 +11,8 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+release/
+dist_installer/
 downloads/
 eggs/
 .eggs/
@@ -52,7 +54,11 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 data/*.db.bak
+data/*.lock
+data/.*.lock
+data/.billflow.lock
 backups/*.db
+backups/*.enc
 exports/*.pdf
 exports/*.xlsx
 

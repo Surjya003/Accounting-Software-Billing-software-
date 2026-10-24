@@ -21,6 +21,7 @@ from app.ui.theme.widgets import (
     PageHeaderWidget, CardFrame, ThemedMessageBox
 )
 from app.ui.async_worker import run_in_background
+from app.ui.save_dialog import execute_export_pipeline
 
 
 class GSTTabWidget(QWidget):
@@ -185,13 +186,15 @@ class GSTTabWidget(QWidget):
             self.table.setUpdatesEnabled(True)
 
     def export_excel(self):
-        if not self.current_data:
+        if not self.current_data or not self.current_data.get("rows"):
+            ThemedMessageBox.warning(self, "No Data", "No GST records to export.")
             return
 
-        def _worker(cur_data, rep_type):
-            filename = f"GST_{rep_type}_{cur_data['from_date']}_to_{cur_data['to_date']}.xlsx"
-            out_p = EXPORTS_DIR / filename
+        cur_data = self.current_data
+        rep_type = self.report_type
+        suggested = f"GST_{rep_type}_{cur_data['from_date']}_to_{cur_data['to_date']}"
 
+        def _generate(out_p):
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = f"GST {rep_type}"
@@ -211,7 +214,7 @@ class GSTTabWidget(QWidget):
                 c.fill = header_fill
                 c.alignment = Alignment(horizontal="right" if "₹" in h else "left")
 
-            from app.services.export_service import sanitize_excel_cell, setup_excel_print_and_freeze
+            from app.services.export_service import sanitize_excel_cell, setup_excel_print_and_freeze, INR_EXCEL_FORMAT
             setup_excel_print_and_freeze(ws, freeze_cell="A5", title_rows="4:4", landscape=True)
 
             row_num = 4
@@ -225,7 +228,7 @@ class GSTTabWidget(QWidget):
 
                 for idx, k in enumerate(["taxable_value", "cgst", "sgst", "igst", "total_value"], start=5):
                     c = ws.cell(row=row_num, column=idx, value=r[k])
-                    c.number_format = '#,##0.00'
+                    c.number_format = INR_EXCEL_FORMAT
 
             # Total row
             row_num += 1
@@ -233,7 +236,7 @@ class GSTTabWidget(QWidget):
             for idx, k in enumerate(["total_taxable", "total_cgst", "total_sgst", "total_igst", "total_value"], start=5):
                 c = ws.cell(row=row_num, column=idx, value=cur_data[k])
                 c.font = Font(bold=True)
-                c.number_format = '#,##0.00'
+                c.number_format = INR_EXCEL_FORMAT
 
             from app.services.export_service import autofit_excel_columns
             autofit_excel_columns(ws)
@@ -241,57 +244,34 @@ class GSTTabWidget(QWidget):
             wb.save(str(out_p))
             return out_p
 
-        def _on_success(out_p):
-            ThemedMessageBox.information(self, "Exported", f"GST Report saved to:\n{out_p}")
-            try:
-                os.startfile(str(out_p))
-            except Exception:
-                pass
-
-        def _on_error(e):
-            ThemedMessageBox.critical(self, "Error", f"Failed to export GST Excel: {e}")
-
-        run_in_background(
-            _worker,
-            on_result=_on_success,
-            on_error=_on_error,
-            trigger_button=self.btn_excel,
-            cur_data=self.current_data,
-            rep_type=self.report_type
+        execute_export_pipeline(
+            parent=self,
+            suggested_name=suggested,
+            kind="xlsx",
+            generator_fn=_generate,
+            trigger_button=self.btn_excel
         )
 
     def export_json(self):
         if not self.current_data or self.report_type != "Sales":
             return
 
-        def _worker(cur_data):
+        q_f = self.dt_from.date()
+        q_t = self.dt_to.date()
+        from_d = date(q_f.year(), q_f.month(), q_f.day())
+        to_d = date(q_t.year(), q_t.month(), q_t.day())
+        suggested = f"GSTR1_{from_d.strftime('%Y%m%d')}_to_{to_d.strftime('%Y%m%d')}"
+
+        def _generate(out_p):
             from app.services.gst_report_service import export_gstr1_offline_json
-            q_f = self.dt_from.date()
-            q_t = self.dt_to.date()
-            from_d = date(q_f.year(), q_f.month(), q_f.day())
-            to_d = date(q_t.year(), q_t.month(), q_t.day())
-            return export_gstr1_offline_json(from_d, to_d)
+            return export_gstr1_offline_json(from_d, to_d, output_path=str(out_p))
 
-        def _on_success(out_p):
-            ThemedMessageBox.information(
-                self,
-                "GSTR-1 JSON Exported",
-                f"Official GSTR-1 JSON exported successfully for Government Offline Tool:\n{out_p}"
-            )
-            try:
-                os.startfile(os.path.dirname(str(out_p)))
-            except Exception:
-                pass
-
-        def _on_error(e):
-            ThemedMessageBox.critical(self, "Export Error", f"Failed to export GSTR-1 JSON: {e}")
-
-        run_in_background(
-            _worker,
-            on_result=_on_success,
-            on_error=_on_error,
-            trigger_button=self.btn_json if hasattr(self, "btn_json") else None,
-            cur_data=self.current_data
+        execute_export_pipeline(
+            parent=self,
+            suggested_name=suggested,
+            kind="json",
+            generator_fn=_generate,
+            trigger_button=self.btn_json if hasattr(self, "btn_json") else None
         )
 
 

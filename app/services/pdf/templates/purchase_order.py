@@ -113,9 +113,9 @@ def _build_po_story(data: Dict[str, Any]) -> List[Any]:
     ship_addr = escape_xml(data.get("ship_to_address") or comp.get("address", ""))
     ship_lines = [
         "<b>Deliver To / Ship To:</b>",
-        f"<b>{escape_xml(comp.get('name', 'Our Company'))}</b>",
+        f"<b>{escape_xml(comp.get('name') or '')}</b>",
         ship_addr,
-        f"GSTIN: <b>{escape_xml(comp.get('gstin', 'N/A'))}</b> | State: {escape_xml(comp.get('state', ''))}",
+        f"GSTIN: <b>{escape_xml(comp.get('gstin') or 'Unregistered')}</b> | State: {escape_xml(comp.get('state', ''))}",
     ]
     if comp.get('phone') or comp.get('email'):
         ship_lines.append(f"Contact: {escape_xml(comp.get('phone', ''))} | Email: {escape_xml(comp.get('email', ''))}")
@@ -305,7 +305,7 @@ def _build_po_story(data: Dict[str, Any]) -> List[Any]:
 
     sig_img = load_safe_image(comp.get("signature_path"), max_w_pt=80.0, max_h_pt=20.0)
     p_auth = [
-        Paragraph(f"for <b>{escape_xml(comp.get('name', 'Company'))}</b>", make_p(font_size=FS_SMALL, alignment=2)),
+        Paragraph(f"for <b>{escape_xml(comp.get('name') or '')}</b>", make_p(font_size=FS_SMALL, alignment=2)),
     ]
     if sig_img:
         p_auth.append(sig_img)

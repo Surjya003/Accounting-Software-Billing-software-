@@ -12,12 +12,13 @@ from PySide6.QtGui import QColor, QFont
 import os
 
 from app.services.report_service import get_trial_balance
-from app.services.export_service import export_trial_balance_excel
+from app.services.export_service import export_trial_balance_pdf, export_trial_balance_excel
 from app.ui.theme import theme_manager
 from app.ui.theme.widgets import (
     PageHeaderWidget, CardFrame, ThemedMessageBox
 )
 from app.ui.async_worker import run_in_background
+from app.ui.save_dialog import execute_export_pipeline
 
 
 class TrialBalanceView(QWidget):
@@ -38,6 +39,13 @@ class TrialBalanceView(QWidget):
             title="Trial Balance",
             subtitle="Double-entry books balance and arithmetic sanity verification"
         )
+        self.btn_pdf = QPushButton("Export PDF")
+        self.btn_pdf.setIcon(theme_manager.get_icon("file-text", size=16))
+        self.btn_pdf.setProperty("variant", "secondary")
+        self.btn_pdf.setFixedHeight(36)
+        self.btn_pdf.clicked.connect(self.export_pdf)
+        self.header_widget.add_custom_action(self.btn_pdf)
+
         self.btn_excel = QPushButton("Export Excel")
         self.btn_excel.setIcon(theme_manager.get_icon("download", size=16))
         self.btn_excel.setProperty("variant", "secondary")
@@ -202,24 +210,40 @@ class TrialBalanceView(QWidget):
             if pid:
                 self.navigate_to.emit("ledger", {"party_id": pid})
 
-    def export_excel(self):
-        if not self.current_data:
+    def export_pdf(self):
+        if not self.current_data or not self.current_data.get("rows"):
+            ThemedMessageBox.warning(self, "No Data", "No Trial Balance data to export.")
             return
 
-        def _on_success(p):
-            ThemedMessageBox.information(self, "Exported", f"Trial Balance saved to:\n{p}")
-            try:
-                os.startfile(str(p))
-            except Exception:
-                pass
+        to_d = self.dt_to.date().toString("yyyyMMdd")
+        suggested = f"Trial_Balance_{to_d}"
 
-        def _on_error(e):
-            ThemedMessageBox.critical(self, "Error", f"Failed to export Excel: {e}")
+        def _generate(out_path):
+            return export_trial_balance_pdf(tb_data=self.current_data, output_path=out_path)
 
-        run_in_background(
-            export_trial_balance_excel,
-            on_result=_on_success,
-            on_error=_on_error,
-            trigger_button=self.btn_excel,
-            tb_data=self.current_data
+        execute_export_pipeline(
+            parent=self,
+            suggested_name=suggested,
+            kind="pdf",
+            generator_fn=_generate,
+            trigger_button=self.btn_pdf
+        )
+
+    def export_excel(self):
+        if not self.current_data or not self.current_data.get("rows"):
+            ThemedMessageBox.warning(self, "No Data", "No Trial Balance data to export.")
+            return
+
+        to_d = self.dt_to.date().toString("yyyyMMdd")
+        suggested = f"Trial_Balance_{to_d}"
+
+        def _generate(out_path):
+            return export_trial_balance_excel(tb_data=self.current_data, output_path=out_path)
+
+        execute_export_pipeline(
+            parent=self,
+            suggested_name=suggested,
+            kind="xlsx",
+            generator_fn=_generate,
+            trigger_button=self.btn_excel
         )

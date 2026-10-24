@@ -66,14 +66,14 @@ def clear_all_business_data():
         # Reset CompanyProfile to clean state
         comp = session.query(CompanyProfile).first()
         if comp:
-            comp.name = "My Business"
+            comp.name = ""
             comp.trade_name = None
             comp.gstin = None
             comp.pan = None
             comp.address = None
             comp.city = None
-            comp.state = "Maharashtra"
-            comp.state_code = "27"
+            comp.state = None
+            comp.state_code = None
             comp.pincode = None
             comp.phone = None
             comp.email = None
@@ -85,7 +85,7 @@ def clear_all_business_data():
             comp.upi_id = None
             comp.logo_path = None
         else:
-            comp = CompanyProfile(name="My Business", state="Maharashtra", state_code="27")
+            comp = CompanyProfile(name="", state=None, state_code=None)
             session.add(comp)
 
         session.commit()

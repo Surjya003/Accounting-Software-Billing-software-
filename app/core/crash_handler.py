@@ -54,7 +54,8 @@ def dump_all_threads() -> str:
 
 import uuid
 import platform
-from app.config import APP_NAME, APP_VERSION
+from app.version import VERSION as APP_VERSION
+APP_NAME = "BillFlow Suite"
 
 def generate_error_id() -> str:
     """Generates a structured, unique error reference ID."""
@@ -95,9 +96,11 @@ def handle_uncaught_exception(exc_type, exc_value, exc_traceback, show_dialog: b
         with open(str(CRASH_LOG_FILE), "a", encoding="utf-8") as f:
             f.write(crash_report)
     except Exception as io_err:
-        sys.stderr.write(f"Failed to write to crash log: {io_err}\n")
+        if sys.stderr:
+            sys.stderr.write(f"Failed to write to crash log: {io_err}\n")
 
-    sys.stderr.write(crash_report)
+    if sys.stderr:
+        sys.stderr.write(crash_report)
 
     # 3. If Qt GUI is running and not in automated test, display user-friendly error dialog
     if show_dialog and not os.environ.get("PYTEST_CURRENT_TEST"):

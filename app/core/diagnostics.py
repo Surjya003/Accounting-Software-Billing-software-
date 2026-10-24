@@ -10,7 +10,6 @@ from datetime import datetime
 from typing import Dict, Any
 
 from app.core.logger import get_logger, LOG_DIR
-from app.database.connection import get_session, engine
 from app.database.models import Base
 
 logger = get_logger("diagnostics")
@@ -73,6 +72,7 @@ def run_system_health_check() -> Dict[str, Any]:
     # 1. Database Check & Latency
     t0 = time.perf_counter()
     try:
+        from app.database.connection import engine
         with engine.connect() as conn:
             # Check WAL mode
             wal = conn.exec_driver_sql("PRAGMA journal_mode").scalar()

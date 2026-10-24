@@ -169,6 +169,20 @@ class ProfitLossView(QWidget):
         self.btn_gen.clicked.connect(self.load_data)
         hdr_filter_box.addWidget(self.btn_gen)
 
+        self.btn_export_pdf = QPushButton("Export PDF")
+        self.btn_export_pdf.setIcon(theme_manager.get_icon("download", size=16))
+        self.btn_export_pdf.setProperty("variant", "secondary")
+        self.btn_export_pdf.setFixedHeight(36)
+        self.btn_export_pdf.clicked.connect(self.export_pdf)
+        hdr_filter_box.addWidget(self.btn_export_pdf)
+
+        self.btn_export_excel = QPushButton("Export Excel")
+        self.btn_export_excel.setIcon(theme_manager.get_icon("download", size=16))
+        self.btn_export_excel.setProperty("variant", "secondary")
+        self.btn_export_excel.setFixedHeight(36)
+        self.btn_export_excel.clicked.connect(self.export_excel)
+        hdr_filter_box.addWidget(self.btn_export_excel)
+
         w_hdr = QWidget()
         w_hdr.setLayout(hdr_filter_box)
         self.header_widget.add_custom_action(w_hdr)
@@ -259,6 +273,7 @@ class ProfitLossView(QWidget):
         ThemedMessageBox.critical(self, "Error Generating P&L", f"Could not calculate P&L: {exc}")
 
     def _on_pnl_loaded(self, pnl):
+        self.current_data = pnl
         revenue = pnl["revenue"]["total_sales"]
         cogs = pnl["cost_of_goods"]["total_purchases"]
         gross = pnl["gross_profit"]
@@ -326,6 +341,32 @@ class ProfitLossView(QWidget):
 
         # Chart
         self.chart.set_data(pnl.get("monthly_trend", []))
+
+    def export_pdf(self):
+        from app.ui.save_dialog import execute_export_pipeline
+        from app.services.export_service import export_pnl_pdf
+        d_from = self.date_from.date().toPython()
+        d_to = self.date_to.date().toPython()
+        execute_export_pipeline(
+            parent=self,
+            export_fn=lambda out: export_pnl_pdf(pnl_data=getattr(self, "current_data", None), output_path=out, from_date=d_from, to_date=d_to),
+            suggested_name=f"PnL_Statement_{d_from.strftime('%Y%m%d')}_{d_to.strftime('%Y%m%d')}",
+            kind="pdf",
+            toast_title="Profit & Loss Statement Exported"
+        )
+
+    def export_excel(self):
+        from app.ui.save_dialog import execute_export_pipeline
+        from app.services.export_service import export_pnl_excel
+        d_from = self.date_from.date().toPython()
+        d_to = self.date_to.date().toPython()
+        execute_export_pipeline(
+            parent=self,
+            export_fn=lambda out: export_pnl_excel(pnl_data=getattr(self, "current_data", None), output_path=out, from_date=d_from, to_date=d_to),
+            suggested_name=f"PnL_Statement_{d_from.strftime('%Y%m%d')}_{d_to.strftime('%Y%m%d')}",
+            kind="xlsx",
+            toast_title="Profit & Loss Statement Exported"
+        )
 
 
 PnLView = ProfitLossView

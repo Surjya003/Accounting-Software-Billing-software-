@@ -10,6 +10,7 @@ import logging
 from typing import Tuple
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from app.core.paths import get_bundled_fonts_dir
 
 logger = logging.getLogger("pdf_fonts")
 
@@ -29,6 +30,7 @@ def register_unicode_fonts() -> Tuple[str, str]:
         return _FONT_REGULAR, _FONT_BOLD
 
     candidate_search_dirs = [
+        str(get_bundled_fonts_dir()),
         r"C:\Windows\Fonts",
         "/usr/share/fonts/truetype",
         "/usr/share/fonts",

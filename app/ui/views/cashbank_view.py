@@ -135,6 +135,18 @@ class CashBankView(QWidget):
         btn_filter.clicked.connect(self.load_transactions)
         filter_box.addWidget(btn_filter)
 
+        self.btn_export_pdf = QPushButton("Export PDF")
+        self.btn_export_pdf.setIcon(theme_manager.get_icon("download", size=16))
+        self.btn_export_pdf.setProperty("variant", "secondary")
+        self.btn_export_pdf.clicked.connect(self.export_pdf)
+        filter_box.addWidget(self.btn_export_pdf)
+
+        self.btn_export_excel = QPushButton("Export Excel")
+        self.btn_export_excel.setIcon(theme_manager.get_icon("download", size=16))
+        self.btn_export_excel.setProperty("variant", "secondary")
+        self.btn_export_excel.clicked.connect(self.export_excel)
+        filter_box.addWidget(self.btn_export_excel)
+
         filter_box.addStretch()
         layout.addWidget(filter_frame)
 
@@ -322,6 +334,36 @@ class CashBankView(QWidget):
             self.card_txn_count.set_value(str(len(txns)))
         except Exception:
             pass
+
+    def export_pdf(self):
+        from app.ui.save_dialog import execute_export_pipeline
+        from app.services.export_service import export_cashbank_pdf
+        d_from = self.date_from.date().toPython()
+        d_to = self.date_to.date().toPython()
+        acc_id = self.combo_filter_acc.currentData()
+        acc_text = self.combo_filter_acc.currentText().replace(" ", "_")
+        execute_export_pipeline(
+            parent=self,
+            export_fn=lambda out: export_cashbank_pdf(account_id=acc_id, start_date=d_from, end_date=d_to, output_path=out),
+            suggested_name=f"CashBank_{acc_text}_{d_from.strftime('%Y%m%d')}_{d_to.strftime('%Y%m%d')}",
+            kind="pdf",
+            toast_title="Cash & Bank Book Exported"
+        )
+
+    def export_excel(self):
+        from app.ui.save_dialog import execute_export_pipeline
+        from app.services.export_service import export_cashbank_excel
+        d_from = self.date_from.date().toPython()
+        d_to = self.date_to.date().toPython()
+        acc_id = self.combo_filter_acc.currentData()
+        acc_text = self.combo_filter_acc.currentText().replace(" ", "_")
+        execute_export_pipeline(
+            parent=self,
+            export_fn=lambda out: export_cashbank_excel(account_id=acc_id, start_date=d_from, end_date=d_to, output_path=out),
+            suggested_name=f"CashBank_{acc_text}_{d_from.strftime('%Y%m%d')}_{d_to.strftime('%Y%m%d')}",
+            kind="xlsx",
+            toast_title="Cash & Bank Book Exported"
+        )
 
     def open_add_account_dialog(self):
         dlg = AddAccountDialog(self)

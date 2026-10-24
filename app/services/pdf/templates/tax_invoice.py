@@ -135,9 +135,9 @@ def _build_tax_invoice_story(data: Dict[str, Any], copy_label: str = "ORIGINAL F
 
     # Seller Block
     seller_lines = [
-        f"<b>{escape_xml(comp.get('name', 'Company Name'))}</b>",
+        f"<b>{escape_xml(comp.get('name') or '')}</b>",
         escape_xml(comp.get('address', '')),
-        f"GSTIN/UIN: <b>{escape_xml(comp.get('gstin', 'N/A'))}</b>",
+        f"GSTIN/UIN: <b>{escape_xml(comp.get('gstin') or 'Unregistered')}</b>",
         f"State Name : <b>{escape_xml(seller_state)}</b>, Code : <b>{escape_xml(seller_code or '-')}</b>",
     ]
     if comp.get('phone') or comp.get('email'):
@@ -475,7 +475,7 @@ def _build_tax_invoice_story(data: Dict[str, Any], copy_label: str = "ORIGINAL F
 
     # Right cell: for <Company>, safe seal/signature image, Authorised Signatory
     sign_lines = [
-        Paragraph(f"for <b>{escape_xml(comp.get('name', 'Company Name'))}</b>", make_p(font_size=FS_BODY, alignment=2)),
+        Paragraph(f"for <b>{escape_xml(comp.get('name') or '')}</b>", make_p(font_size=FS_BODY, alignment=2)),
     ]
 
     # Load signature & seal safely in dedicated space

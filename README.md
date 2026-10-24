@@ -320,17 +320,23 @@ The application utilizes 20 relational entities managed through SQLAlchemy:
 
 ## 7. Installation, Setup & Quick Start
 
-### 7.1 Prerequisites
-* Python 3.12 - 3.14 (tested on 3.12 and 3.14).
-* Git (optional).
-* Windows 10/11, macOS, or Linux.
+### 7.1 Production Windows Installer (Recommended for End Users)
+BillFlow Suite is distributed as a native 64-bit Windows installer:
+* **Installer:** `release\BillFlow_Setup_v1.0.0.exe` (or latest version from release)
+* **Supported OS:** Windows 10 (version 1809 or higher) and Windows 11 (64-bit x64)
+* **Offline Operation:** 100% offline — requires no internet connection or cloud server.
+* **Scope:** Installs per-user (`%LOCALAPPDATA%\Programs\BillFlow Suite\`) without requiring administrator elevation, or system-wide (`C:\Program Files\BillFlow Suite\`).
+* **Enterprise User Data:** Accounting books, automated backups, and logs are strictly isolated in `%APPDATA%\BillFlow\` (never in the installation program folder). Live database is local SQLite in WAL mode; backups are AES-256-GCM encrypted.
 
-### 7.2 Installation
-1. Clone or download the repository to your local directory:
+### 7.2 Development & Source Code Setup (For Developers)
+1. Prerequisites:
+   * Python 3.12 - 3.14 (tested on 3.12 and 3.14, 64-bit).
+   * Inno Setup 6 or 7 (for compiling the installer).
+2. Clone or download the repository to your local directory:
    ```bash
    cd "Accounting Software"
    ```
-2. Create and activate a virtual environment (recommended):
+3. Create and activate a virtual environment:
    ```bash
    python -m venv venv
    # Windows:
@@ -338,17 +344,21 @@ The application utilizes 20 relational entities managed through SQLAlchemy:
    # Linux/macOS:
    source venv/bin/activate
    ```
-3. Install required dependencies:
+4. Install required dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-### 7.3 Launching the Application
-Launch via Python module:
-```bash
-python -m app.main
-```
-Or double-click `run_app.bat` on Windows.
+### 7.3 Launching & Building
+* **Launch in Development:**
+  ```bash
+  python -m app.main
+  ```
+  Or double-click `run_app.bat` on Windows.
+* **Compile Standalone Release & Installer:**
+  ```cmd
+  build_release.bat
+  ```
 
 ---
 

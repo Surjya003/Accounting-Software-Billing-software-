@@ -214,5 +214,6 @@ def get_expense_summary(
 
 # Aliases for compatibility
 add_expense = create_expense
+get_expenses = get_all_expenses
 get_expenses_summary = get_expense_summary
 

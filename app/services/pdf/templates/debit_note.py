@@ -123,9 +123,9 @@ def _build_debit_note_story(data: Dict[str, Any]) -> List[Any]:
 
     buyer_p = Paragraph(
         f"<b>Issued By (Buyer):</b><br/>"
-        f"<b>{escape_xml(comp.get('name', 'Our Company'))}</b><br/>"
+        f"<b>{escape_xml(comp.get('name') or '')}</b><br/>"
         f"{escape_xml(comp.get('address', ''))}<br/>"
-        f"GSTIN: <b>{escape_xml(comp.get('gstin', 'N/A'))}</b><br/>"
+        f"GSTIN: <b>{escape_xml(comp.get('gstin') or 'Unregistered')}</b><br/>"
         f"Against Supplier Invoice: <b>{supp_bill_no}</b> dt. <b>{supp_bill_date}</b><br/>"
         f"Our Purchase/Goods Receipt Ref.: <b>{po_ref}</b>",
         make_p(font_size=FS_BODY, leading=FS_BODY + 2.5)
@@ -310,7 +310,7 @@ def _build_debit_note_story(data: Dict[str, Any]) -> List[Any]:
     sig_img = load_safe_image(comp.get("signature_path"), max_w_pt=75.0, max_h_pt=20.0)
 
     auth_lines = [
-        Paragraph(f"for <b>{escape_xml(comp.get('name', 'Company'))}</b>", make_p(font_size=FS_BODY, alignment=2)),
+        Paragraph(f"for <b>{escape_xml(comp.get('name') or '')}</b>", make_p(font_size=FS_BODY, alignment=2)),
     ]
     if sig_img:
         auth_lines.append(sig_img)

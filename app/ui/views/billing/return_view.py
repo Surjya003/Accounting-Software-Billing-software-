@@ -18,6 +18,7 @@ from app.ui.theme.widgets import (
     PageHeaderWidget, CardFrame, StatusBadgeLabel, ThemedMessageBox,
     configure_dialog_window_flags
 )
+from app.ui.save_dialog import execute_export_pipeline
 
 
 class ReturnItemRow(QFrame):
@@ -239,11 +240,11 @@ class ReturnView(QWidget):
         bottom.addWidget(self.lbl_count)
         bottom.addStretch()
 
-        btn_print = QPushButton("Print Note / Return")
-        btn_print.setIcon(theme_manager.get_icon("printer", size=16))
-        btn_print.setProperty("variant", "secondary")
-        btn_print.clicked.connect(self.print_return)
-        bottom.addWidget(btn_print)
+        self.btn_print = QPushButton("Print Note / Return")
+        self.btn_print.setIcon(theme_manager.get_icon("printer", size=16))
+        self.btn_print.setProperty("variant", "secondary")
+        self.btn_print.clicked.connect(self.print_return)
+        bottom.addWidget(self.btn_print)
 
         layout.addLayout(bottom)
 
@@ -375,19 +376,24 @@ class ReturnView(QWidget):
                 }
             }
 
-            if is_sales:
-                pdf_path = generator.generate_credit_note(ret_data)
-                note_type = "Credit Note"
-            else:
-                pdf_path = generator.generate_debit_note(ret_data)
-                note_type = "Debit Note"
+            safe_num = ret["return_number"].replace('/', '-')
+            p_name = ret.get("party_name", "Party")
+            note_type = "CreditNote" if is_sales else "DebitNote"
+            suggested = f"{note_type}_{safe_num}_{p_name}"
 
-            ThemedMessageBox.information(self, "PDF Generated", f"{note_type} PDF saved to:\n{pdf_path}")
-            import os, subprocess
-            if hasattr(os, "startfile"):
-                os.startfile(pdf_path)
-            else:
-                subprocess.call(("open", pdf_path))
+            def _generate(out_p):
+                if is_sales:
+                    return generator.generate_credit_note(ret_data, filename=str(out_p))
+                else:
+                    return generator.generate_debit_note(ret_data, filename=str(out_p))
+
+            execute_export_pipeline(
+                parent=self,
+                suggested_name=suggested,
+                kind="pdf",
+                generator_fn=_generate,
+                trigger_button=getattr(self, "btn_print", None)
+            )
         except Exception as e:
             ThemedMessageBox.critical(self, "Error", f"Failed to generate PDF: {e}")
 

@@ -135,6 +135,7 @@ class SettingsView(QWidget):
         form_layout.addRow("City:", self.inp_ccity)
 
         self.combo_cstate = QComboBox()
+        self.combo_cstate.addItem("-- Select State --", userData=("", ""))
         for code, st_name in INDIAN_STATES:
             self.combo_cstate.addItem(f"{code} - {st_name}", userData=(code, st_name))
         form_layout.addRow("State & Code:", self.combo_cstate)
@@ -426,12 +427,16 @@ class SettingsView(QWidget):
                 self.inp_caddr.setText(comp.address or "")
                 self.inp_ccity.setText(comp.city or "")
 
-                st_code = comp.state_code or "27"
+                st_code = comp.state_code or ""
+                matched = False
                 for i in range(self.combo_cstate.count()):
                     data = self.combo_cstate.itemData(i)
-                    if data and data[0] == st_code:
+                    if data and data[0] == st_code and st_code:
                         self.combo_cstate.setCurrentIndex(i)
+                        matched = True
                         break
+                if not matched:
+                    self.combo_cstate.setCurrentIndex(0)
 
                 self.inp_bank_name.setText(comp.bank_name or "")
                 self.inp_bank_ac.setText(comp.bank_account_no or "")
@@ -452,7 +457,9 @@ class SettingsView(QWidget):
 
     def save_company_profile(self):
         st_data = self.combo_cstate.currentData()
-        st_code, st_name = st_data if st_data else ("27", "Maharashtra")
+        st_code, st_name = st_data if st_data else ("", "")
+        if not st_code:
+            st_name = ""
 
         with get_session() as session:
             comp = session.query(CompanyProfile).first()
@@ -467,8 +474,8 @@ class SettingsView(QWidget):
             comp.email = self.inp_cemail.text().strip()
             comp.address = self.inp_caddr.text().strip()
             comp.city = self.inp_ccity.text().strip()
-            comp.state = st_name
-            comp.state_code = st_code
+            comp.state = st_name or None
+            comp.state_code = st_code or None
             comp.bank_name = self.inp_bank_name.text().strip()
             comp.bank_account_no = self.inp_bank_ac.text().strip()
             comp.bank_ifsc = self.inp_bank_ifsc.text().strip().upper()
@@ -580,6 +587,21 @@ class SettingsView(QWidget):
         self.spn_font_min.setValue(7.5)
         self.spn_font_min.setSuffix(" pt")
         f_layout2.addRow("Smallest item text size:", self.spn_font_min)
+
+        # Export & Save Location Settings
+        self.chk_ask_save = QCheckBox("Ask where to save every time when exporting (PDF / Excel)")
+        self.chk_ask_save.setChecked(True)
+        f_layout2.addRow("", self.chk_ask_save)
+
+        folder_row = QHBoxLayout()
+        self.inp_export_folder = QLineEdit()
+        self.inp_export_folder.setPlaceholderText("Default export folder (optional)...")
+        btn_browse_folder = QPushButton("Browse...")
+        btn_browse_folder.setProperty("variant", "secondary")
+        btn_browse_folder.clicked.connect(self._browse_default_export_folder)
+        folder_row.addWidget(self.inp_export_folder, 1)
+        folder_row.addWidget(btn_browse_folder)
+        f_layout2.addRow("Default Export Folder:", folder_row)
 
         c_layout2.addLayout(f_layout2)
         layout.addWidget(card_opts)
@@ -711,6 +733,25 @@ class SettingsView(QWidget):
             self.current_sig_path = None
             self.lbl_sig_path.setText("No signature selected")
 
+        if hasattr(self, "chk_ask_save"):
+            from app.ui.save_dialog import get_export_settings
+            res = get_export_settings()
+            if isinstance(res, (tuple, list)):
+                ask_every_time = res[0] if len(res) > 0 else True
+                default_folder = res[1] if len(res) > 1 else ""
+            elif isinstance(res, dict):
+                ask_every_time = res.get("ask_every_time", True)
+                default_folder = res.get("default_folder", "")
+            else:
+                ask_every_time, default_folder = True, ""
+            self.chk_ask_save.setChecked(bool(ask_every_time))
+            self.inp_export_folder.setText(str(default_folder or ""))
+
+    def _browse_default_export_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Default Export Folder", self.inp_export_folder.text())
+        if folder:
+            self.inp_export_folder.setText(folder)
+
     def _on_adaptive_font_toggled(self, checked: bool):
         self.spn_font_max.setEnabled(checked)
         self.spn_font_min.setEnabled(checked)
@@ -757,6 +798,13 @@ class SettingsView(QWidget):
             comp.seal_path = self.current_seal_path
             comp.signature_path = self.current_sig_path
             session.commit()
+
+        if hasattr(self, "chk_ask_save"):
+            from app.ui.save_dialog import set_export_settings
+            set_export_settings(
+                ask_every_time=self.chk_ask_save.isChecked(),
+                default_folder=self.inp_export_folder.text().strip()
+            )
 
         ThemedMessageBox.information(self, "Success", "PDF Document Suite settings saved successfully!")
         self.profile_updated.emit()
@@ -812,6 +860,12 @@ class SettingsView(QWidget):
         btn_clear.setIcon(theme_manager.icon("trash", color_token="text_on_accent", size=16))
         btn_clear.clicked.connect(self.handle_clear_data)
         btn_box.addWidget(btn_clear)
+
+        btn_factory = QPushButton("Reset to Factory Settings")
+        btn_factory.setProperty("variant", "danger")
+        btn_factory.setIcon(theme_manager.icon("refresh", color_token="text_on_accent", size=16))
+        btn_factory.clicked.connect(self.handle_factory_reset)
+        btn_box.addWidget(btn_factory)
 
         layout.addLayout(btn_box)
         layout.addStretch()
@@ -901,6 +955,63 @@ class SettingsView(QWidget):
                 self.profile_updated.emit()
             except Exception as e:
                 ThemedMessageBox.critical(self, "Error", f"Failed to clear data: {e}")
+
+    def handle_factory_reset(self):
+        confirmed = ThemedMessageBox.question(
+            self, "Reset to Factory Settings",
+            "This will reset your Company Profile, terms, and export preferences to a brand-new factory state.\n\n"
+            "Would you like to proceed?"
+        )
+        if not confirmed:
+            return
+
+        backup_first = ThemedMessageBox.question(
+            self, "Create Safety Backup?",
+            "Would you like to generate an instant database safety backup before resetting?"
+        )
+        if backup_first:
+            try:
+                b_path = create_backup()
+                ThemedMessageBox.information(self, "Backup Saved", f"Safety backup created at:\n{b_path}")
+            except Exception as e:
+                ThemedMessageBox.warning(self, "Backup Warning", f"Could not create backup: {e}")
+
+        second_confirm = ThemedMessageBox.question(
+            self, "Final Confirmation",
+            "Are you completely sure? This will wipe your company profile identity and revert all settings to factory default."
+        )
+        if second_confirm:
+            try:
+                with get_session() as session:
+                    comp = session.query(CompanyProfile).first()
+                    if comp:
+                        comp.name = ""
+                        comp.trade_name = None
+                        comp.gstin = None
+                        comp.pan = None
+                        comp.address = None
+                        comp.city = None
+                        comp.state = None
+                        comp.state_code = None
+                        comp.pincode = None
+                        comp.phone = None
+                        comp.email = None
+                        comp.bank_name = None
+                        comp.bank_account_no = None
+                        comp.bank_ifsc = None
+                        comp.bank_branch = None
+                        comp.upi_id = None
+                        comp.logo_path = None
+                        comp.seal_path = None
+                        comp.signature_path = None
+                        session.commit()
+                from app.ui.save_dialog import set_export_settings
+                set_export_settings(ask_every_time=True, default_folder="")
+                self.load_company_profile()
+                self.profile_updated.emit()
+                ThemedMessageBox.information(self, "Factory Reset", "Settings have been restored to factory clean state.")
+            except Exception as e:
+                ThemedMessageBox.critical(self, "Error", f"Failed to reset settings: {e}")
 
     # ==========================================
     # Tab 3: Offline Licensing
