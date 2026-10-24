@@ -125,7 +125,7 @@ class TrialBalanceView(QWidget):
         def _on_error(e):
             ThemedMessageBox.critical(self, "Error", f"Failed to compute Trial Balance: {e}")
 
-        run_in_background(
+        self._worker = run_in_background(
             get_trial_balance,
             on_result=_on_success,
             on_error=_on_error,
@@ -141,13 +141,15 @@ class TrialBalanceView(QWidget):
         if data["is_balanced"]:
             col = theme_manager.color("success")
             self.lbl_status.setText(
-                f"<span style='color: {col};'>✓ Trial Balance is Balanced | Total Debits = Total Credits (Closing Dr: ₹{data['total_cl_dr']:,.2f} | Closing Cr: ₹{data['total_cl_cr']:,.2f})</span>"
+                f"<span style='color: {col}; font-weight:bold;'>[BALANCED]</span> "
+                f"Total Debits = Total Credits (Closing Dr: ₹{data['total_cl_dr']:,.2f} | Closing Cr: ₹{data['total_cl_cr']:,.2f})"
             )
         else:
             diff = abs(data['total_cl_dr'] - data['total_cl_cr'])
             col = theme_manager.color("danger")
             self.lbl_status.setText(
-                f"<span style='color: {col};'>⚠ Trial Balance Difference: ₹{diff:,.2f} | (Total Closing Dr: ₹{data['total_cl_dr']:,.2f} vs Cr: ₹{data['total_cl_cr']:,.2f})</span>"
+                f"<span style='color: {col}; font-weight:bold;'>[DIFFERENCE]</span> "
+                f"Discrepancy: ₹{diff:,.2f} | (Closing Dr: ₹{data['total_cl_dr']:,.2f} vs Closing Cr: ₹{data['total_cl_cr']:,.2f})"
             )
 
         # Table rows + 1 total row

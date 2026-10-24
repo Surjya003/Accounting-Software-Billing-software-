@@ -432,7 +432,36 @@ class InvoiceFormDialog(QDialog):
         tab_items_layout.addWidget(totals_frame, 0)
         self.tabs.addTab(tab_items, "Items & Totals")
 
-        # === TAB 2: LOGISTICS ===
+        # === TAB 2: DELIVERY & REFERENCES ===
+        tab_delivery = QWidget()
+        tab_delivery_layout = QFormLayout(tab_delivery)
+        tab_delivery_layout.setContentsMargins(16, 16, 16, 16)
+        tab_delivery_layout.setSpacing(10)
+
+        self.txt_delivery_note = QLineEdit()
+        self.txt_delivery_note.setPlaceholderText("Delivery note number / Challan reference")
+        tab_delivery_layout.addRow("Delivery Note:", self.txt_delivery_note)
+
+        self.txt_mode_terms_payment = QLineEdit()
+        self.txt_mode_terms_payment.setPlaceholderText("e.g. Net 30 Days / Cheque / Advance / Cash / UPI")
+        tab_delivery_layout.addRow("Mode/Terms of Payment:", self.txt_mode_terms_payment)
+
+        self.txt_ref_no_date = QLineEdit()
+        self.txt_ref_no_date.setPlaceholderText("e.g. REF-2026-001 dt 15-10-2026")
+        tab_delivery_layout.addRow("Reference No. & Date.:", self.txt_ref_no_date)
+
+        self.txt_other_references = QLineEdit()
+        self.txt_other_references.setPlaceholderText("e.g. Quotation Ref / Sales Order Ref / Project Ref")
+        tab_delivery_layout.addRow("Other Reference:", self.txt_other_references)
+
+        self.txt_terms_of_delivery = QTextEdit()
+        self.txt_terms_of_delivery.setMaximumHeight(75)
+        self.txt_terms_of_delivery.setPlaceholderText("e.g. Ex-Works / Door delivery / Freight to pay / Delivery within 7 days")
+        tab_delivery_layout.addRow("Terms of Delivery:", self.txt_terms_of_delivery)
+
+        self.tabs.addTab(tab_delivery, "Delivery & References")
+
+        # === TAB 3: LOGISTICS ===
         tab_log = QWidget()
         tab_log_layout = QFormLayout(tab_log)
         tab_log_layout.setContentsMargins(16, 16, 16, 16)
@@ -468,7 +497,7 @@ class InvoiceFormDialog(QDialog):
 
         self.tabs.addTab(tab_log, "Shipping & Logistics")
 
-        # === TAB 3: TERMS & BANK ===
+        # === TAB 4: TERMS & BANK ===
         tab_terms = QWidget()
         tab_terms_layout = QFormLayout(tab_terms)
         tab_terms_layout.setContentsMargins(16, 16, 16, 16)
@@ -578,6 +607,12 @@ class InvoiceFormDialog(QDialog):
         self.txt_po_number.setText(inv.get("po_number", "") or "")
         self.txt_pi_number.setText(inv.get("pi_number", "") or "")
 
+        self.txt_delivery_note.setText(inv.get("delivery_note", "") or "")
+        self.txt_mode_terms_payment.setText(inv.get("mode_terms_of_payment", "") or "")
+        self.txt_ref_no_date.setText(inv.get("reference_no_date", "") or "")
+        self.txt_other_references.setText(inv.get("other_references", "") or "")
+        self.txt_terms_of_delivery.setPlainText(inv.get("terms_of_delivery", "") or "")
+
         party_id = inv.get("party_id")
         if party_id:
             for i in range(self.cmb_party.count()):
@@ -624,6 +659,11 @@ class InvoiceFormDialog(QDialog):
             "invoice_date": inv_date,
             "po_number": self.txt_po_number.text().strip(),
             "pi_number": self.txt_pi_number.text().strip(),
+            "delivery_note": self.txt_delivery_note.text().strip(),
+            "mode_terms_of_payment": self.txt_mode_terms_payment.text().strip(),
+            "reference_no_date": self.txt_ref_no_date.text().strip(),
+            "other_references": self.txt_other_references.text().strip(),
+            "terms_of_delivery": self.txt_terms_of_delivery.toPlainText().strip(),
             "status": self.cmb_status.currentText(),
             "is_interstate": is_interstate,
             "shipping_address": self.txt_shipping_address.toPlainText().strip(),
@@ -634,6 +674,7 @@ class InvoiceFormDialog(QDialog):
             "eway_bill_no": self.txt_eway_bill.text().strip(),
             "destination": self.txt_destination.text().strip(),
             "terms_conditions": self.txt_terms.toPlainText().strip(),
+            "terms_and_conditions": self.txt_terms.toPlainText().strip(),
             "notes": self.txt_notes.toPlainText().strip(),
             "bank_name": self.txt_bank_name.text().strip(),
             "bank_account_no": self.txt_bank_ac.text().strip(),
@@ -835,89 +876,8 @@ class InvoiceView(QWidget):
             return
 
         try:
-            from app.services.billing.invoice_pdf_generator import InvoicePDFGenerator
-            from app.database.connection import get_session
-            from app.database.models import CompanyProfile
-
-            generator = InvoicePDFGenerator()
-
-            company_info = {}
-            with get_session() as session:
-                comp = session.query(CompanyProfile).first()
-                if comp:
-                    company_info = {
-                        'name': comp.name or '',
-                        'address': comp.address or '',
-                        'gstin': comp.gstin or '',
-                        'state': comp.state or '',
-                        'phone': comp.phone or '',
-                        'email': comp.email or '',
-                        'bank_name': comp.bank_name or '',
-                        'account_no': comp.bank_account_no or '',
-                        'ifsc': comp.bank_ifsc or '',
-                    }
-
-            is_interstate = inv_data.get('is_interstate', False)
-            tax_mode_str = 'inter_state' if is_interstate else 'intra_state'
-
-            pdf_data = {
-                'invoice_number': inv_data['invoice_number'],
-                'date': inv_data['invoice_date'].strftime('%d-%m-%Y') if hasattr(inv_data['invoice_date'], 'strftime') else str(inv_data['invoice_date']),
-                'tax_mode': tax_mode_str,
-                'po_number': inv_data.get('po_number', ''),
-                'pi_number': inv_data.get('pi_number', ''),
-                'company': company_info,
-                'customer': {
-                    'name': inv_data.get('party_name', ''),
-                    'address': inv_data.get('party_address', ''),
-                    'gstin': inv_data.get('party_gstin', ''),
-                    'state': inv_data.get('party_state', ''),
-                    'phone': inv_data.get('party_phone', '')
-                },
-                'logistics': {
-                    'dispatch_doc_no': inv_data.get('lr_no', ''),
-                    'waybill_no': inv_data.get('eway_bill_no', ''),
-                    'dispatched_through': inv_data.get('transporter_name', ''),
-                    'destination': inv_data.get('destination', ''),
-                    'payment_terms': '',
-                    'po_date': '',
-                    'buyer_order_no': inv_data.get('po_number', ''),
-                    'terms_delivery': ''
-                },
-                'consignee': {
-                    'address': inv_data.get('shipping_address', '')
-                },
-                'items': [],
-                'totals': {
-                    'taxable_amount': float(inv_data.get('subtotal', 0)),
-                    'cgst_amount': float(inv_data.get('cgst_total', 0)),
-                    'sgst_amount': float(inv_data.get('sgst_total', 0)),
-                    'igst_amount': float(inv_data.get('igst_total', 0)),
-                    'grand_total': float(inv_data.get('total_amount', 0)),
-                }
-            }
-
-            for item in inv_data.get('items', []):
-                qty = float(item.get('quantity', 0))
-                unit_price = float(item.get('unit_price', 0))
-                gst_rate = float(item.get('gst_rate_pct', 0))
-                cgst_amt = float(item.get('cgst_amount', 0))
-                sgst_amt = float(item.get('sgst_amount', 0))
-                igst_amt = float(item.get('igst_amount', 0))
-                item_tax_amount = cgst_amt + sgst_amt + igst_amt
-
-                pdf_data['items'].append({
-                    'product_name': item.get('item_description', ''),
-                    'description': '',
-                    'hsn_code': item.get('hsn_code', ''),
-                    'quantity': qty,
-                    'unit': item.get('unit', 'PCS'),
-                    'unit_price': unit_price,
-                    'tax_rate': gst_rate,
-                    'tax_amount': item_tax_amount,
-                })
-
-            pdf_path = generator.generate_invoice(pdf_data)
+            from app.services.billing.invoice_pdf_generator import generate_invoice_pdf
+            pdf_path = generate_invoice_pdf(inv_data)
 
             if os.name == 'nt':
                 os.startfile(pdf_path)

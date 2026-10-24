@@ -53,6 +53,9 @@ hidden_imports = [
     "app.core.logger",
     "app.core.crash_handler",
     "app.core.diagnostics",
+    "app.branding",
+    "app.ui.splash",
+    "app.ui.about_dialog",
 ]
 
 # Additional submodules from core packages
@@ -64,6 +67,15 @@ hidden_imports += collect_submodules("barcode")
 datas = [
     (os.path.join(ROOT_DIR, "docs", "COMPLIANCE.md"), "docs"),
 ]
+
+# Include brand assets (logo, emblem) and themes
+assets_dir = os.path.join(ROOT_DIR, "assets")
+if os.path.isdir(assets_dir):
+    datas.append((assets_dir, "assets"))
+
+themes_dir = os.path.join(ROOT_DIR, "themes")
+if os.path.isdir(themes_dir):
+    datas.append((themes_dir, "themes"))
 
 # If company logo exists, include it
 logo_path = os.path.join(ROOT_DIR, "data", "company_logo.png")

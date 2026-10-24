@@ -27,6 +27,9 @@ from app.services.pdf.core.page import (
     PAGE_SIZE, PAGE_WIDTH, PAGE_HEIGHT, PAGE_MARGIN, FRAME_WIDTH, FRAME_HEIGHT, NumberedCanvas, SimpleDocTemplate
 )
 from app.services.pdf.core.flex_table import calculate_filler_height, build_stretched_table
+from app.services.pdf.core.adaptive_table import (
+    AdaptiveCell, format_total_quantity, build_adaptive_items_table
+)
 from app.services.pdf.core.formatting import (
     format_currency, format_date_ddmmyyyy, amount_to_words_inr
 )
@@ -54,8 +57,8 @@ FS_BODY = 7.2
 FS_SMALL = 6.4
 FS_TINY = 5.8
 
-# 11 Items Columns: Sl(22), Code(44), Desc(142.58), HSN(42), Qty(40), Unit(26), Rate(44), Disc(30), GST(36), Amt(58), DelDate(54) = 538.58 pt
-COLS_PO = [22.0, 44.0, 142.58, 42.0, 40.0, 26.0, 44.0, 30.0, 36.0, 58.0, 54.0]
+# 11 Items Columns: Sl(18), Code(33), Desc(130.58), HSN(50), Qty(38), Unit(26), Rate(50), Disc(33), GST(34), Amt(62), DelDate(64) = 538.58 pt
+COLS_PO = [18.0, 33.0, 130.58, 50.0, 38.0, 26.0, 50.0, 33.0, 34.0, 62.0, 64.0]
 
 
 def _build_po_story(data: Dict[str, Any]) -> List[Any]:
@@ -178,7 +181,7 @@ def _build_po_story(data: Dict[str, Any]) -> List[Any]:
         ]
     ]
 
-    item_rows = []
+    item_specs: List[List[AdaptiveCell]] = []
     tot_qty = 0.0
     tot_amt = 0.0
 
@@ -196,26 +199,31 @@ def _build_po_story(data: Dict[str, Any]) -> List[Any]:
         tot_amt += amt
         line_del = format_date_ddmmyyyy(it.get("delivery_date")) or del_req or "-"
 
-        item_rows.append([
-            Paragraph(str(idx), make_p(font_size=FS_BODY, alignment=1)),
-            Paragraph(item_code, make_p(font_size=FS_BODY, alignment=1)),
-            Paragraph(f"<b>{desc}</b>", make_p(font_size=FS_BODY)),
-            Paragraph(hsn, make_p(font_size=FS_BODY, alignment=1)),
-            Paragraph(f"{qty:,.2f}", make_p(font_size=FS_BODY, alignment=2)),
-            Paragraph(unit, make_p(font_size=FS_BODY, alignment=1)),
-            Paragraph(format_currency(rate, num_fmt), make_p(font_size=FS_BODY, alignment=2)),
-            Paragraph(f"{disc_val:.1f}%" if disc_val > 0 else "-", make_p(font_size=FS_BODY, alignment=2)),
-            Paragraph(f"{tax_pct:.1f}%", make_p(font_size=FS_BODY, alignment=2)),
-            Paragraph(format_currency(amt, num_fmt), make_p(font_size=FS_BODY, alignment=2)),
-            Paragraph(line_del, make_p(font_size=FS_SMALL, alignment=1)),
+        rate_str = format_currency(rate, num_fmt)
+        amt_str = format_currency(amt, num_fmt)
+        disc_str = f"{disc_val:.1f}%" if disc_val > 0 else "-"
+
+        item_specs.append([
+            AdaptiveCell(str(idx), alignment=1),
+            AdaptiveCell(item_code, alignment=1),
+            AdaptiveCell(f"<b>{desc}</b>", alignment=0, bold=True),
+            AdaptiveCell(hsn, alignment=1),
+            AdaptiveCell(f"{qty:,.2f}", alignment=2),
+            AdaptiveCell(unit, alignment=1),
+            AdaptiveCell(rate_str, alignment=2),
+            AdaptiveCell(disc_str, alignment=2),
+            AdaptiveCell(f"{tax_pct:.1f}%", alignment=2),
+            AdaptiveCell(amt_str, alignment=2),
+            AdaptiveCell(line_del, alignment=1, is_small=True),
         ])
 
+    tot_qty_str = format_total_quantity(data.get("items", []), tot_qty)
     total_row = [
         Paragraph("", make_p()),
         Paragraph("<b>Total</b>", make_p(font_size=FS_BODY, bold=True)),
         Paragraph("", make_p()),
         Paragraph("", make_p()),
-        Paragraph(f"<b>{tot_qty:,.2f}</b>", make_p(font_size=FS_BODY, bold=True, alignment=2)),
+        Paragraph(f"<b>{tot_qty_str}</b>", make_p(font_size=FS_BODY, bold=True, alignment=2)),
         Paragraph("", make_p()),
         Paragraph("", make_p()),
         Paragraph("", make_p()),
@@ -231,15 +239,8 @@ def _build_po_story(data: Dict[str, Any]) -> List[Any]:
         ('LINEBELOW', (0, -1), (-1, -1), 0.6, COLOR_BORDER),
         ('INNERGRID', (0, 0), (-1, -1), 0.4, COLOR_GRID),
         ('BOX', (0, 0), (-1, -1), 0.5, COLOR_BORDER),
-        ('TOPPADDING', (0, 0), (-1, -1), 2.0),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 2.0),
-        ('LEFTPADDING', (0, 0), (-1, -1), 2.0),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 2.0),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
     ]
-
-    meas_table = Table(headers + item_rows + [total_row], colWidths=COLS_PO)
-    meas_table.setStyle(TableStyle(table_style))
 
     # 5. Financial Summary & Special Instructions
     footer_elements = []
@@ -330,22 +331,12 @@ def _build_po_story(data: Dict[str, Any]) -> List[Any]:
     ]))
     footer_elements.append(t_signs)
 
-    # 8. Measure flex filler
-    filler_h = calculate_filler_height(
-        flowables_before_table=list(story),
-        items_table_initial=meas_table,
-        flowables_after_table=footer_elements,
-        available_width=FRAME_WIDTH_PT,
-        available_height=FRAME_HEIGHT,
-        min_filler=10.0
-    )
-
-    stretched_table = build_stretched_table(
-        header_data=headers,
-        item_rows=item_rows,
+    # 8. Build Adaptive Items Table Flowables
+    table_flowables = build_adaptive_items_table(
+        headers=headers,
+        item_specs=item_specs,
         col_widths=COLS_PO,
         base_style=table_style,
-        filler_height=filler_h,
         total_row_data=total_row,
         total_row_style=[
             ('LINEABOVE', (0, -1), (-1, -1), 0.8, COLOR_BORDER),
@@ -353,10 +344,19 @@ def _build_po_story(data: Dict[str, Any]) -> List[Any]:
             ('BACKGROUND', (0, -1), (-1, -1), COLOR_BG_LIGHT),
             ('TOPPADDING', (0, -1), (-1, -1), 2),
             ('BOTTOMPADDING', (0, -1), (-1, -1), 2),
-        ]
+        ],
+        flowables_before=list(story),
+        flowables_after=footer_elements,
+        company_settings=comp,
+        available_width=FRAME_WIDTH_PT,
+        available_height=FRAME_HEIGHT,
+        fallback_font_size=FS_BODY,
+        fallback_padding=2.0,
+        desc_col_idx=2,
+        grid_color=COLOR_GRID
     )
 
-    story.append(stretched_table)
+    story.extend(table_flowables)
     story.extend(footer_elements)
     return story
 

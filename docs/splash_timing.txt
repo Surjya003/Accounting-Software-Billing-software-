@@ -1,0 +1,60 @@
+=== BillFlow Suite Startup Timing & Smoothness Benchmark ===
+Version: 1.0.0 | Brand: Binapani Automation | Maker: Surjyakamal Saha
+Timestamp: 2026-10-24 14:30:20
+
+--- 1. Ten Consecutive Runs with Splash Enabled ---
+  Run #01: Total: 0.248s | Window Ready: 243ms | Max Frame Gap: 38ms
+    Step Progression:
+      • Starting application...      (weight   5%) @    9 ms
+      • Loading theme...             (weight  10%) @   10 ms
+      • Checking database...         (weight  25%) @   12 ms
+      • Applying updates...          (weight  45%) @   13 ms
+      • Loading company settings...  (weight  60%) @   14 ms
+      • Preparing modules...         (weight  80%) @   16 ms
+      • Opening workspace...         (weight  95%) @   17 ms
+      • Ready                        (weight 100%) @   19 ms
+  Run #02: Total: 0.249s | Window Ready: 247ms | Max Frame Gap: 43ms
+  Run #03: Total: 0.228s | Window Ready: 223ms | Max Frame Gap: 29ms
+  Run #04: Total: 0.231s | Window Ready: 228ms | Max Frame Gap: 30ms
+  Run #05: Total: 0.288s | Window Ready: 283ms | Max Frame Gap: 35ms
+  Run #06: Total: 0.261s | Window Ready: 258ms | Max Frame Gap: 26ms
+  Run #07: Total: 0.264s | Window Ready: 234ms | Max Frame Gap: 35ms
+  Run #08: Total: 0.278s | Window Ready: 275ms | Max Frame Gap: 35ms
+  Run #09: Total: 0.267s | Window Ready: 262ms | Max Frame Gap: 42ms
+  Run #10: Total: 0.322s | Window Ready: 317ms | Max Frame Gap: 47ms
+
+  Average Startup Time (with Splash): 0.264s
+  Maximum Frame Gap: 47ms (Requirement <= 50ms: PASS)
+
+--- 2. Ten Consecutive Runs with Splash Disabled (--no-splash) ---
+  Run #01: Total: 0.250s
+  Run #02: Total: 0.218s
+  Run #03: Total: 0.272s
+  Run #04: Total: 0.235s
+  Run #05: Total: 0.222s
+  Run #06: Total: 0.268s
+  Run #07: Total: 0.217s
+  Run #08: Total: 0.215s
+  Run #09: Total: 0.198s
+  Run #10: Total: 0.220s
+
+  Average Startup Time (without Splash): 0.231s
+  Difference (Minimum Visible Time Buffer): 0.032s
+
+--- 3. Failure Drills Verification ---
+  (a) Migration Error Drill:
+      Status: Splash closed immediately on error = True [PASS]
+  (b) Corrupt Database Drill:
+      Status: Handled safely, splash closed = True [PASS]
+  (c) Missing Logo Drill:
+      Status: Monogram 'BA' fallback engaged without error = True [PASS]
+  (d) Reduce Motion Drill:
+      Status: Instant static presentation, 0 animation loops = True [PASS]
+  (e) Command-line Flag Drill (--no-splash):
+      Status: --no-splash flag disables splash = True [PASS]
+  (f) QSettings Preference Drill:
+      Status: QSettings toggling recognized before DB open = True [PASS]
+  (g) Slow Database Step Drill (simulated long step):
+      Status: Progress updated smoothly, event loop alive = True [PASS]
+
+=== All Drills Completed Successfully ===

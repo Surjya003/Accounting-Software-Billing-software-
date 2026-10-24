@@ -189,15 +189,16 @@ def _build_tax_invoice_story(data: Dict[str, Any], copy_label: str = "ORIGINAL F
 
     inv_num = escape_xml(data.get("invoice_number", "DRAFT"))
     eway_num = escape_xml(data.get("eway_bill_no") or logistics.get("waybill_no") or "-")
-    del_note = escape_xml(data.get("delivery_note") or "-")
-    mode_terms = escape_xml(data.get("mode_terms_of_payment") or "-")
-    ref_no_date = escape_xml(data.get("reference_no_date") or "-")
-    other_ref = escape_xml(data.get("other_references") or "-")
+    del_note = escape_xml(data.get("delivery_note") or logistics.get("delivery_note") or "-")
+    mode_terms = escape_xml(data.get("mode_terms_of_payment") or logistics.get("payment_terms") or data.get("payment_mode") or "-")
+    ref_no_date = escape_xml(data.get("reference_no_date") or data.get("reference_number") or logistics.get("reference_no_date") or "-")
+    other_ref = escape_xml(data.get("other_references") or logistics.get("other_references") or "-")
     buyer_order_no = escape_xml(data.get("buyers_order_no") or logistics.get("buyer_order_no") or data.get("po_number") or "-")
     dispatch_doc_no = escape_xml(data.get("dispatch_doc_no") or logistics.get("dispatch_doc_no") or "-")
     dispatched_through = escape_xml(data.get("dispatched_through") or logistics.get("dispatched_through") or "-")
     destination = escape_xml(data.get("destination") or logistics.get("destination") or "-")
-    terms_delivery = escape_xml(data.get("terms_of_delivery") or "-")
+    terms_delivery_raw = data.get("terms_of_delivery") or logistics.get("terms_delivery") or data.get("terms_delivery") or "-"
+    terms_delivery = escape_xml(terms_delivery_raw).replace("\n", "<br/>")
 
     row1_left = Paragraph(f"Invoice No.<br/><b>{inv_num}</b>", make_p(font_size=FS_BODY, leading=FS_BODY + 3))
     row1_right = Paragraph(f"Dated<br/><b>{inv_date_str}</b>", make_p(font_size=FS_BODY, leading=FS_BODY + 3))
@@ -314,7 +315,7 @@ def _build_tax_invoice_story(data: Dict[str, Any], copy_label: str = "ORIGINAL F
                 AdaptiveCell(str(idx), alignment=1),
                 AdaptiveCell(f"<b>{desc}</b>", alignment=0, bold=True),
                 AdaptiveCell(hsn, alignment=1),
-                AdaptiveCell(f"{qty:,.2f} {unit}", alignment=2),
+                AdaptiveCell(f"{qty:,.2f}", alignment=2),
                 AdaptiveCell(rate_str, alignment=2),
                 AdaptiveCell(unit, alignment=1),
                 AdaptiveCell(f"{tax_rate:.1f} %", alignment=2),
@@ -326,7 +327,7 @@ def _build_tax_invoice_story(data: Dict[str, Any], copy_label: str = "ORIGINAL F
                 AdaptiveCell(str(idx), alignment=1),
                 AdaptiveCell(f"<b>{desc}</b>", alignment=0, bold=True),
                 AdaptiveCell(hsn, alignment=1),
-                AdaptiveCell(f"{qty:,.2f} {unit}", alignment=2),
+                AdaptiveCell(f"{qty:,.2f}", alignment=2),
                 AdaptiveCell(rate_str, alignment=2),
                 AdaptiveCell(unit, alignment=1),
                 AdaptiveCell(f"{half_tax:.1f} %", alignment=2),

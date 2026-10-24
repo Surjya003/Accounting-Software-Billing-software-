@@ -6,7 +6,7 @@ and keyboard shortcut bindings (F1 to F12).
 import os
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton,
+    QMainWindow, QWidget, QApplication, QHBoxLayout, QVBoxLayout, QPushButton,
     QLabel, QStackedWidget, QStatusBar, QFrame, QButtonGroup, QMessageBox,
     QScrollArea
 )
@@ -217,6 +217,14 @@ class MainWindow(QMainWindow):
         self.btn_theme_toggle.clicked.connect(self._toggle_theme)
         h_layout.addWidget(self.btn_theme_toggle)
 
+        # About Dialog Button
+        self.btn_about = QPushButton()
+        self.btn_about.setProperty("variant", "icon_only")
+        self.btn_about.setIcon(theme_manager.icon("info", size=18))
+        self.btn_about.setToolTip("About BillFlow Suite")
+        self.btn_about.clicked.connect(self._open_about_dialog)
+        h_layout.addWidget(self.btn_about)
+
         # Live Clock
         self.lbl_clock = QLabel()
         self.lbl_clock.setProperty("variant", "tabular")
@@ -231,53 +239,81 @@ class MainWindow(QMainWindow):
         # -- Accounting Views --
         self.view_dashboard = DashboardView()
         self.view_dashboard.navigate_to.connect(self.navigate_to)
+        QApplication.processEvents()
 
         self.view_parties = PartyView()
         self.view_parties.navigate_to.connect(self.navigate_to)
+        QApplication.processEvents()
 
         self.view_voucher = VoucherEntryView()
         self.view_voucher.navigate_to.connect(self.navigate_to)
+        QApplication.processEvents()
 
         self.view_ledger = LedgerView()
         self.view_ledger.navigate_to.connect(self.navigate_to)
+        QApplication.processEvents()
 
         self.view_outstanding = OutstandingView()
         self.view_outstanding.navigate_to.connect(self.navigate_to)
+        QApplication.processEvents()
 
         self.view_daybook = DayBookView()
         self.view_daybook.navigate_to.connect(self.navigate_to)
+        QApplication.processEvents()
 
         self.view_trial_balance = TrialBalanceView()
         self.view_trial_balance.navigate_to.connect(self.navigate_to)
+        QApplication.processEvents()
 
         self.view_gst = GSTReportView()
+        QApplication.processEvents()
 
         self.view_settings = SettingsView()
         self.view_settings.profile_updated.connect(self.refresh_company_header)
+        QApplication.processEvents()
 
         # -- Billing Views --
         self.view_invoices = InvoiceView()
+        QApplication.processEvents()
+
         self.view_quotations = QuotationView()
         self.view_quotations.navigate_to.connect(self.navigate_to)
+        QApplication.processEvents()
+
         self.view_proforma = ProformaView()
+        QApplication.processEvents()
+
         self.view_challans = ChallanView()
+        QApplication.processEvents()
+
         self.view_products = ProductView()
+        QApplication.processEvents()
+
         self.view_purchase_orders = PurchaseOrderView()
+        QApplication.processEvents()
+
         self.view_returns = ReturnView()
+        QApplication.processEvents()
+
         self.view_billing_reports = BillingReportsView()
+        QApplication.processEvents()
 
         # -- Extended Views --
         self.view_expense = ExpenseView()
         self.view_expense.navigate_to.connect(self.navigate_to)
+        QApplication.processEvents()
 
         self.view_cashbank = CashBankView()
         self.view_cashbank.navigate_to.connect(self.navigate_to)
+        QApplication.processEvents()
 
         self.view_pnl = PnLView()
         self.view_pnl.navigate_to.connect(self.navigate_to)
+        QApplication.processEvents()
 
         self.view_stock_report = StockReportView()
         self.view_stock_report.navigate_to.connect(self.navigate_to)
+        QApplication.processEvents()
 
         # Register all 21 views in the stack
         self.stack.addWidget(self.view_dashboard)        # index 0
@@ -400,6 +436,14 @@ class MainWindow(QMainWindow):
 
         # Diagnostics & Thread Dump
         QShortcut(QKeySequence("Ctrl+Shift+D"), self, self.show_diagnostics_dialog)
+        # About Dialog Shortcut
+        QShortcut(QKeySequence("Ctrl+Shift+A"), self, self._open_about_dialog)
+
+    def _open_about_dialog(self):
+        """Open the enterprise About & Diagnostics dialog."""
+        from app.ui.about_dialog import AboutDialog
+        dlg = AboutDialog(self)
+        dlg.exec()
 
     def setup_timer(self):
         self.timer = QTimer(self)

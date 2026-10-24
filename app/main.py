@@ -1,9 +1,14 @@
 """
-VyaparLedger Pro - Main Application Entry Point
+BillFlow Suite - Main Application Entry Point
+=============================================
+Orchestrates enterprise startup pipeline with animated splash screen,
+theme initialization, database migration integrity, offline license gating,
+and graceful failure recovery.
 """
 import sys
 import os
 from pathlib import Path
+from typing import Optional
 
 # Ensure root directory is on Python path
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -12,22 +17,16 @@ if str(ROOT_DIR) not in sys.path:
 
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QMessageBox, QFrame
+    QLineEdit, QPushButton, QMessageBox, QFrame, QWidget
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QFont
 
 from app.core import setup_logging, install_crash_handler, get_logger
-from app.database.connection import init_db
-from app.services.sample_data import populate_sample_data
-from app.services.license_service import (
-    get_license_status, activate_license, get_machine_fingerprint
-)
-from app.ui.main_window import MainWindow
-from app.config import APP_NAME, APP_VERSION
-
-
+from app.branding import APP_NAME, BRAND_NAME, MAKER_NAME, TAGLINE, VERSION
+from app.ui.splash import SplashScreen, is_splash_enabled, is_reduce_motion_enabled
 from app.ui.theme import theme_manager, ThemedMessageBox, configure_dialog_window_flags
+
 
 class LicenseGateDialog(QDialog):
     """Blocking dialog shown when trial has expired and no valid license exists."""
@@ -129,6 +128,7 @@ class LicenseGateDialog(QDialog):
         if not comp or not key:
             ThemedMessageBox.warning(self, "Missing Fields", "Please fill in both Company Name and Activation Key.")
             return
+        from app.services.license_service import activate_license
         success, msg = activate_license(comp, key)
         if success:
             self.activated = True
@@ -138,21 +138,105 @@ class LicenseGateDialog(QDialog):
             ThemedMessageBox.critical(self, "Activation Failed", f"License verification failed:\n{msg}")
 
 
+# Standard startup pipeline steps with weights (total 100)
+STARTUP_STEPS = [
+    ("Starting application...", 5),
+    ("Loading theme...", 10),
+    ("Checking database...", 25),
+    ("Applying updates...", 45),
+    ("Loading company settings...", 60),
+    ("Preparing modules...", 80),
+    ("Opening workspace...", 95),
+    ("Ready", 100),
+]
+
+
+def run_startup_pipeline(splash: Optional[SplashScreen] = None, custom_steps=None) -> QWidget:
+    """
+    Executes the real startup pipeline, updating splash progress and maintaining 60fps events.
+    Returns the initialized MainWindow.
+    """
+    logger = get_logger("main")
+    steps = custom_steps if custom_steps is not None else STARTUP_STEPS
+
+    # Step 1: Starting application... (5%)
+    if splash:
+        splash.set_progress(5, "Starting application...")
+    QApplication.processEvents()
+    logger.info("Starting %s v%s", APP_NAME, VERSION)
+
+    # Step 2: Loading theme... (10%)
+    if splash:
+        splash.set_progress(10, "Loading theme...")
+    QApplication.processEvents()
+    theme_manager.restore_theme()
+    QApplication.processEvents()
+
+    # Step 3: Checking database... (25%)
+    if splash:
+        splash.set_progress(25, "Checking database...")
+    QApplication.processEvents()
+    from app.config import DATA_DIR, DB_PATH
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    QApplication.processEvents()
+
+    # Step 4: Applying updates... (45%)
+    if splash:
+        splash.set_progress(45, "Applying updates...")
+    QApplication.processEvents()
+    from app.database.connection import init_db
+    init_db()
+    QApplication.processEvents()
+
+    # Step 5: Loading company settings... (60%)
+    if splash:
+        splash.set_progress(60, "Loading company settings...")
+    QApplication.processEvents()
+    from app.services.license_service import get_license_status
+    lic = get_license_status()
+    QApplication.processEvents()
+
+    # Step 6: Preparing modules... (80%)
+    if splash:
+        splash.set_progress(80, "Preparing modules...")
+    QApplication.processEvents()
+    from app.ui.main_window import MainWindow
+    QApplication.processEvents()
+
+    # Step 7: Opening workspace... (95%)
+    if splash:
+        splash.set_progress(95, "Opening workspace...")
+    QApplication.processEvents()
+
+    # Check license gate if trial expired
+    if not lic.get("is_licensed") and not lic.get("is_trial"):
+        if splash:
+            splash.close_on_error()
+        gate = LicenseGateDialog(lic)
+        result = gate.exec()
+        if result != QDialog.Accepted or not gate.activated:
+            sys.exit(0)
+
+    window = MainWindow()
+    QApplication.processEvents()
+
+    # Step 8: Ready (100%)
+    if splash:
+        splash.finish(window)
+    else:
+        window.show()
+
+    return window
+
+
 def run_app():
+    """Main application lifecycle entry point."""
     # 0. Initialize Centralized Logging & Crash Protection
     setup_logging()
     install_crash_handler()
     logger = get_logger("main")
-    logger.info("Starting %s v%s", APP_NAME, APP_VERSION)
 
-    # 1. Initialize SQLite Database Schema
-    try:
-        init_db()
-    except Exception as db_err:
-        logger.exception("Failed to initialize database: %s", db_err)
-        raise
-
-    # 2. Setup Qt Application & Theme System
+    # 1. Setup Qt Application
     if hasattr(Qt, "HighDpiScaleFactorRoundingPolicy"):
         QApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -161,24 +245,29 @@ def run_app():
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Vyapar Software Solutions")
 
-    # Restore and apply enterprise theme
-    theme_manager.restore_theme()
+    # 2. Check and show splash immediately BEFORE slow work
+    splash = None
+    if is_splash_enabled():
+        splash = SplashScreen()
+        splash.show_splash()
+        QApplication.processEvents()
 
-    # 3. License Gate Check
-    lic = get_license_status()
-    if not lic["is_licensed"] and not lic["is_trial"]:
-        # Trial expired, no valid license — force activation dialog
-        gate = LicenseGateDialog(lic)
-        result = gate.exec()
-        if result != QDialog.Accepted or not gate.activated:
-            sys.exit(0)
-
-    # 4. Launch Main Window
-    window = MainWindow()
-    window.show()
+    # 3. Run Startup Pipeline with comprehensive error handling
+    try:
+        window = run_startup_pipeline(splash=splash)
+    except Exception as err:
+        logger.exception("Application startup failed: %s", err)
+        if splash:
+            splash.close_on_error()
+        ThemedMessageBox.critical(
+            None,
+            "Startup Failure",
+            f"An error occurred while launching {APP_NAME}:\n\n{err}\n\nPlease consult the log file for details."
+        )
+        raise
 
     sys.exit(app.exec())
 
+
 if __name__ == "__main__":
     run_app()
-

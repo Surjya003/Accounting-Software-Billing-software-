@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QCheckBox, QDoubleSpinBox
 )
 from decimal import Decimal
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSettings
 from PySide6.QtGui import QFont
 
 from app.database.connection import get_session, create_backup, restore_backup
@@ -58,22 +58,27 @@ class SettingsView(QWidget):
         self.tab_company = QWidget()
         self.tab_pdf_suite = QWidget()
         self.init_pdf_suite_tab()
+        QApplication.processEvents()
         self.init_company_and_theme_tab()
+        QApplication.processEvents()
         self.tabs.addTab(self.tab_company, "🏢 Company Profile & Print Settings")
 
         # Tab 2: Database & Backup
         self.tab_backup = QWidget()
         self.init_backup_tab()
+        QApplication.processEvents()
         self.tabs.addTab(self.tab_backup, "💾 Backup & Database Management")
 
         # Tab 3: Offline Licensing
         self.tab_license = QWidget()
         self.init_license_tab()
+        QApplication.processEvents()
         self.tabs.addTab(self.tab_license, "🔑 Offline License & Activation")
 
         # Tab 4: System Diagnostics & Crash Logs
         self.tab_diagnostics = QWidget()
         self.init_diagnostics_tab()
+        QApplication.processEvents()
         self.tabs.addTab(self.tab_diagnostics, "🩺 System Health & Crash Diagnostics")
 
         layout.addWidget(self.tabs, 1)
@@ -190,6 +195,7 @@ class SettingsView(QWidget):
         left_col.addWidget(btn_save, alignment=Qt.AlignRight)
 
         main_h.addLayout(left_col, 5)
+        QApplication.processEvents()
 
         # ----------------- Right Column: Appearance & Live Preview -----------------
         right_col = QVBoxLayout()
@@ -246,6 +252,33 @@ class SettingsView(QWidget):
             self.rb_light.setChecked(True)
 
         self.theme_group.buttonClicked.connect(self.on_theme_radio_changed)
+
+        # Startup & Animation Preferences
+        sel_layout.addSpacing(10)
+        lbl_startup_opts = QLabel("Startup & Animation Options")
+        lbl_startup_opts.setProperty("variant", "label")
+        sel_layout.addWidget(lbl_startup_opts)
+
+        qsettings = QSettings("BillFlow", "ThemeSystem")
+        self.chk_show_splash = QCheckBox("Show opening screen (Animated Splash)")
+        val_splash = qsettings.value("show_splash", True)
+        self.chk_show_splash.setChecked(val_splash if isinstance(val_splash, bool) else str(val_splash).lower() in ("true", "1"))
+        self.chk_show_splash.toggled.connect(lambda chk: qsettings.setValue("show_splash", chk))
+        sel_layout.addWidget(self.chk_show_splash)
+
+        self.chk_reduce_motion = QCheckBox("Reduce motion (disable animations and transitions)")
+        val_motion = qsettings.value("reduce_motion", False)
+        self.chk_reduce_motion.setChecked(val_motion if isinstance(val_motion, bool) else str(val_motion).lower() in ("true", "1"))
+        self.chk_reduce_motion.toggled.connect(lambda chk: qsettings.setValue("reduce_motion", chk))
+        sel_layout.addWidget(self.chk_reduce_motion)
+
+        sel_layout.addSpacing(6)
+        btn_about_app = QPushButton("About BillFlow Suite...")
+        btn_about_app.setProperty("variant", "secondary")
+        btn_about_app.setIcon(theme_manager.icon("info", size=16))
+        btn_about_app.clicked.connect(self.open_about_dialog)
+        sel_layout.addWidget(btn_about_app)
+
         right_col.addWidget(sel_card)
 
         # Live Interactive Preview Card
@@ -335,6 +368,13 @@ class SettingsView(QWidget):
             theme_manager.apply_theme("classic_navy")
         elif button == self.rb_system:
             theme_manager.apply_theme("system")
+
+    def open_about_dialog(self):
+        """Open the enterprise About & Diagnostics dialog."""
+        from app.ui.about_dialog import AboutDialog
+        dlg = AboutDialog(self)
+        dlg.exec()
+
 
     def handle_browse_custom_theme(self):
         file_path, _ = QFileDialog.getOpenFileName(

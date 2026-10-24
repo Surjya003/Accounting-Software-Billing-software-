@@ -21,6 +21,7 @@ from app.services.billing.invoice_pdf_generator import InvoicePDFGenerator
 from app.services.billing.proforma_pdf_generator import ProformaPDFGenerator
 from app.services.billing.quotation_pdf_generator import QuotationPDFGenerator
 from app.services.billing.challan_pdf_generator import ChallanPDFGenerator
+from app.services.billing.purchase_order_pdf_generator import PurchaseOrderPDFGenerator
 from app.services.pdf.core.adaptive_table import (
     ITEM_FONT_MAX, ITEM_FONT_MIN_ONE_PAGE, ITEM_FONT_PAGINATED, format_total_quantity
 )
@@ -208,3 +209,37 @@ def test_total_row_quantity_unit_matching():
         {"unit": None},
     ]
     assert format_total_quantity(blank_items, 10.0) == "10.00"
+
+
+def test_purchase_order_adaptive_font_sizing(tmp_path):
+    """Assert Purchase Order adapts item font sizing monotonically and paginates cleanly."""
+    gen = PurchaseOrderPDFGenerator()
+    prev_font = ITEM_FONT_MAX + 1.0
+
+    # Test single-page monotonic scaling
+    for n in [1, 2, 3, 5, 8, 12]:
+        data = _build_test_invoice(n)
+        data["po_number"] = f"PO-ADP-{n}"
+        out_pdf = tmp_path / f"test_po_{n}.pdf"
+        gen.generate_po(data, filename=str(out_pdf))
+
+        sizes = _extract_body_font_sizes(out_pdf)
+        assert len(sizes) == 1, f"Expected 1 page for PO {n} items, got {len(sizes)}"
+        f_size = sizes[0]
+        assert f_size is not None
+        assert f_size <= prev_font, f"Font size grew from {prev_font} to {f_size} at {n} items"
+        assert f_size >= ITEM_FONT_MIN_ONE_PAGE
+        assert f_size <= ITEM_FONT_MAX
+        prev_font = f_size
+
+    # Test multi-page pagination consistency
+    out_multi = tmp_path / "test_po_multi.pdf"
+    data_multi = _build_test_invoice(25)
+    data_multi["po_number"] = "PO-ADP-MULTI"
+    gen.generate_po(data_multi, filename=str(out_multi))
+
+    multi_sizes = _extract_body_font_sizes(out_multi)
+    assert len(multi_sizes) > 1, f"Expected multiple pages, got {len(multi_sizes)}"
+    for p_idx, s in enumerate(multi_sizes):
+        assert s == ITEM_FONT_PAGINATED, f"Page {p_idx+1} font {s} != {ITEM_FONT_PAGINATED}"
+

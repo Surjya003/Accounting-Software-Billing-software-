@@ -223,6 +223,8 @@ class DashboardView(QWidget):
 
         action_layout.addStretch()
         main_layout.addWidget(action_frame)
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()
 
         # 4. Three Column Grid
         grid_layout = QHBoxLayout()
@@ -359,7 +361,10 @@ class DashboardView(QWidget):
         self.refresh_data()
 
     def refresh_data(self):
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()
         kpi = get_dashboard_kpis()
+        QApplication.processEvents()
         self.card_rec.set_value(f"₹{kpi['total_receivables']:,.2f}")
         self.card_pay.set_value(f"₹{kpi['total_payables']:,.2f}")
         self.card_sales.set_value(f"₹{kpi['today_sales']:,.2f}", f"Month: ₹{kpi['month_sales']:,.2f}")

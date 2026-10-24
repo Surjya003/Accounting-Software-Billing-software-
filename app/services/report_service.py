@@ -334,8 +334,15 @@ def get_trial_balance(
 
         parties = session.query(Party).filter(Party.is_active.is_(True)).order_by(Party.name.asc()).all()
         bank_accounts = session.query(BankAccount).filter(BankAccount.is_active.is_(True)).all()
-        vouchers = session.query(Voucher).all()
-        expenses = session.query(Expense).join(ExpenseCategory, Expense.category_id == ExpenseCategory.id, isouter=True).all()
+        v_query = session.query(Voucher)
+        if to_date:
+            v_query = v_query.filter(Voucher.voucher_date <= to_date)
+        vouchers = v_query.all()
+
+        e_query = session.query(Expense).join(ExpenseCategory, Expense.category_id == ExpenseCategory.id, isouter=True)
+        if to_date:
+            e_query = e_query.filter(Expense.expense_date <= to_date)
+        expenses = e_query.all()
 
         accounts: Dict[str, Dict[str, Any]] = {}
 

@@ -3,8 +3,15 @@ Background Async Worker Infrastructure for BillFlow Suite
 Ensures long-running exports and calculations execute in background threads
 using QThreadPool / QRunnable without locking or freezing the Qt UI.
 """
-from typing import Callable, Any, Optional
+import logging
+from typing import Callable, Any, Optional, Set
 from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
+
+logger = logging.getLogger("BillFlow.AsyncWorker")
+
+# Module-level registry maintaining strong references to running workers.
+# Prevents Python's garbage collector from destroying worker and WorkerSignals before completion.
+_ACTIVE_WORKERS: Set["AsyncWorker"] = set()
 
 
 class WorkerSignals(QObject):
@@ -32,6 +39,7 @@ class AsyncWorker(QRunnable):
             res = self.fn(*self.args, **self.kwargs)
             self.signals.result.emit(res)
         except Exception as e:
+            logger.exception("AsyncWorker error during execution: %s", e)
             self.signals.error.emit(e)
         finally:
             self.signals.finished.emit()
@@ -49,6 +57,7 @@ def run_in_background(
     """
     Disables trigger_button, executes fn on QThreadPool, and delivers
     results or errors back to the UI on the main Qt thread.
+    Retains worker reference in _ACTIVE_WORKERS until completion.
     """
     if trigger_button is not None:
         try:
@@ -57,15 +66,21 @@ def run_in_background(
             pass
 
     worker = AsyncWorker(fn, *args, **kwargs)
+    _ACTIVE_WORKERS.add(worker)
 
     def _cleanup():
-        if trigger_button is not None:
-            try:
+        try:
+            if trigger_button is not None:
                 trigger_button.setEnabled(True)
-            except Exception:
-                pass
-        if on_finished is not None:
-            on_finished()
+        except Exception:
+            pass
+        finally:
+            _ACTIVE_WORKERS.discard(worker)
+            if on_finished is not None:
+                try:
+                    on_finished()
+                except Exception as ex:
+                    logger.error("Error in on_finished callback: %s", ex)
 
     if on_result is not None:
         worker.signals.result.connect(on_result)

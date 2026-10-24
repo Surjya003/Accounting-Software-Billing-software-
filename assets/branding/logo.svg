@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <!-- Background Shield Gradient -->
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E3A8A" />
+      <stop offset="50%" stop-color="#2563EB" />
+      <stop offset="100%" stop-color="#3B82F6" />
+    </linearGradient>
+    
+    <!-- Top Highlight Inset -->
+    <linearGradient id="topGleam" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.45" />
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.0" />
+    </linearGradient>
+
+    <!-- Glowing Accent Flow -->
+    <linearGradient id="flowGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#60A5FA" />
+      <stop offset="100%" stop-color="#93C5FD" />
+    </linearGradient>
+
+    <!-- Gold Accent Node -->
+    <radialGradient id="nodeGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FDE047" />
+      <stop offset="100%" stop-color="#EAB308" />
+    </radialGradient>
+  </defs>
+
+  <!-- Ambient Glow Drop -->
+  <rect x="10" y="10" width="100" height="100" rx="28" fill="#1D4ED8" opacity="0.3" filter="blur(4px)" />
+
+  <!-- Base App Icon Tile -->
+  <rect x="10" y="10" width="100" height="100" rx="26" fill="url(#shieldGrad)" />
+  
+  <!-- Subtle Inner Border Highlight -->
+  <rect x="11" y="11" width="98" height="98" rx="25" fill="none" stroke="url(#topGleam)" stroke-width="1.5" />
+
+  <!-- Geometric Modern Monogram (Intertwined B & Flow Curve) -->
+  <!-- Left Spine -->
+  <path d="M36 32 C36 29.79 37.79 28 40 28 L56 28 C67 28 75 34 75 43 C75 49 71 54 63 56 C73 58 78 64 78 74 C78 84 69 90 57 90 L40 90 C37.79 90 36 88.21 36 86 Z" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Flow Center Bridge -->
+  <line x1="36" y1="58" x2="62" y2="58" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" />
+
+  <!-- Dynamic Accounting Stream Accent (Curved Flow Blade) -->
+  <path d="M48 42 L60 42 C64 42 67 44 67 47 C67 50 64 52 60 52 L48 52 Z" fill="#93C5FD" opacity="0.3" />
+  <path d="M48 64 L62 64 C66.5 64 70 67 70 71.5 C70 76 66.5 79 62 79 L48 79 Z" fill="#93C5FD" opacity="0.3" />
+
+  <!-- Orbiting Innovation Dot -->
+  <circle cx="86" cy="30" r="5" fill="url(#nodeGrad)" />
+  <circle cx="86" cy="30" r="8" fill="none" stroke="#FEF08A" stroke-width="1" opacity="0.6" />
+</svg>
