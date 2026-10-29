@@ -158,14 +158,19 @@ class InvoiceItemWidget(QFrame):
             "tax_rate": self.cmb_gst.currentText(),
         }
 
-    def populate_item(self, item_data):
+    def set_item_data(self, item_data):
         product_id = item_data.get("product_id")
+        matched = False
         if product_id:
             for i in range(self.cmb_product.count()):
                 pd = self.cmb_product.itemData(i)
                 if pd and pd.get("id") == product_id:
                     self.cmb_product.setCurrentIndex(i)
+                    matched = True
                     break
+        if not matched and item_data.get("item_description"):
+            self.cmb_product.setEditText(item_data.get("item_description", ""))
+
         self.spn_qty.setValue(float(item_data.get("quantity", 1)))
         self.spn_rate.setValue(float(item_data.get("unit_price", 0)))
         self.spn_disc.setValue(float(item_data.get("discount_pct", 0)))
@@ -177,6 +182,8 @@ class InvoiceItemWidget(QFrame):
         self._recalculate()
         hsn = str(item_data.get("hsn_code") or "").strip()
         self.lbl_hsn_warn.setVisible(not bool(hsn))
+
+    populate_item = set_item_data
 
 
 class InvoiceFormDialog(QDialog):

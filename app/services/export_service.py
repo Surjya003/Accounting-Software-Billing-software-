@@ -205,6 +205,14 @@ def export_party_ledger_pdf(ledger_data=None, output_path: Optional[Path] = None
     cell_bold_right = ParagraphStyle(
         'CellBR', parent=cell_style, fontName=FONT_BOLD, alignment=2
     )
+    th_style = ParagraphStyle(
+        'PLTH', parent=styles['Normal'],
+        fontName=FONT_BOLD, fontSize=8, leading=10,
+        textColor=colors.white
+    )
+    th_right = ParagraphStyle(
+        'PLTHR', parent=th_style, alignment=2
+    )
 
     story = []
     
@@ -299,14 +307,14 @@ def export_party_ledger_pdf(ledger_data=None, output_path: Optional[Path] = None
     # 4. Transaction Table
     table_data = [
         [
-            Paragraph("<b>Date</b>", cell_style),
-            Paragraph("<b>Type</b>", cell_style),
-            Paragraph("<b>Product</b>", cell_style),
-            Paragraph("<b>Vch / Ref No.</b>", cell_style),
-            Paragraph("<b>Particulars / Narration</b>", cell_style),
-            Paragraph("<b>Debit (Rs.)</b>", cell_right),
-            Paragraph("<b>Credit (Rs.)</b>", cell_right),
-            Paragraph("<b>Balance (Rs.)</b>", cell_right)
+            Paragraph("<b>Date</b>", th_style),
+            Paragraph("<b>Type</b>", th_style),
+            Paragraph("<b>Product</b>", th_style),
+            Paragraph("<b>Vch / Ref No.</b>", th_style),
+            Paragraph("<b>Particulars / Narration</b>", th_style),
+            Paragraph("<b>Debit (Rs.)</b>", th_right),
+            Paragraph("<b>Credit (Rs.)</b>", th_right),
+            Paragraph("<b>Balance (Rs.)</b>", th_right)
         ]
     ]
     
@@ -514,6 +522,8 @@ def export_outstanding_pdf(report_data=None, output_path: Optional[Path] = None)
     cell_right = ParagraphStyle('OCR', parent=cell_style, alignment=2)
     cell_bold = ParagraphStyle('OCB', parent=cell_style, fontName=FONT_BOLD)
     cell_bold_right = ParagraphStyle('OCBR', parent=cell_style, fontName=FONT_BOLD, alignment=2)
+    th_style = ParagraphStyle('OTH', parent=styles['Normal'], fontName=FONT_BOLD, fontSize=8, leading=10, textColor=colors.white)
+    th_right = ParagraphStyle('OTHR', parent=th_style, alignment=2)
     heading_style = ParagraphStyle('OHead', parent=styles['Heading2'], fontName=FONT_BOLD, fontSize=12, leading=14, textColor=colors.HexColor('#1E293B'), alignment=1)
 
     story = []
@@ -559,14 +569,14 @@ def export_outstanding_pdf(report_data=None, output_path: Optional[Path] = None)
     # 3. Table
     table_data = [
         [
-            Paragraph("<b>Party Name</b>", cell_style),
-            Paragraph("<b>City</b>", cell_style),
-            Paragraph("<b>Phone</b>", cell_style),
-            Paragraph("<b>0-30 Days (Rs.)</b>", cell_right),
-            Paragraph("<b>31-60 Days (Rs.)</b>", cell_right),
-            Paragraph("<b>61-90 Days (Rs.)</b>", cell_right),
-            Paragraph("<b>90+ Days (Rs.)</b>", cell_right),
-            Paragraph("<b>Total Due (Rs.)</b>", cell_bold_right),
+            Paragraph("<b>Party Name</b>", th_style),
+            Paragraph("<b>City</b>", th_style),
+            Paragraph("<b>Phone</b>", th_style),
+            Paragraph("<b>0-30 Days (Rs.)</b>", th_right),
+            Paragraph("<b>31-60 Days (Rs.)</b>", th_right),
+            Paragraph("<b>61-90 Days (Rs.)</b>", th_right),
+            Paragraph("<b>90+ Days (Rs.)</b>", th_right),
+            Paragraph("<b>Total Due (Rs.)</b>", th_right),
         ]
     ]
     
@@ -641,19 +651,21 @@ def export_daybook_pdf(daybook_data=None, output_path: Optional[Path] = None) ->
     cell_style = ParagraphStyle('DBCell', fontName=FONT_REGULAR, fontSize=8, leading=10, textColor=colors.HexColor('#1E293B'))
     cell_right = ParagraphStyle('DBCR', parent=cell_style, alignment=2)
     heading_style = ParagraphStyle('DBHead', parent=styles['Heading2'], fontName=FONT_BOLD, fontSize=12, leading=14, textColor=colors.HexColor('#1E293B'), alignment=1)
+    th_style = ParagraphStyle('DBTH', parent=styles['Normal'], fontName=FONT_BOLD, fontSize=8, leading=10, textColor=colors.white)
+    th_right = ParagraphStyle('DBTHR', parent=th_style, alignment=2)
     story = [
         Paragraph("TRANSACTION DAY BOOK", heading_style),
         Paragraph(f"<font size=8 color='#64748B'>Period: {daybook_data['from_date']} to {daybook_data['to_date']}</font>", ParagraphStyle('DBSub', alignment=1)),
         Spacer(1, 10)
     ]
     table_data = [[
-        Paragraph("<b>Date</b>", cell_style),
-        Paragraph("<b>Type</b>", cell_style),
-        Paragraph("<b>Voucher No.</b>", cell_style),
-        Paragraph("<b>Party Name</b>", cell_style),
-        Paragraph("<b>Ref No.</b>", cell_style),
-        Paragraph("<b>Debit (Rs.)</b>", cell_right),
-        Paragraph("<b>Credit (Rs.)</b>", cell_right)
+        Paragraph("<b>Date</b>", th_style),
+        Paragraph("<b>Type</b>", th_style),
+        Paragraph("<b>Voucher No.</b>", th_style),
+        Paragraph("<b>Party Name</b>", th_style),
+        Paragraph("<b>Ref No.</b>", th_style),
+        Paragraph("<b>Debit (Rs.)</b>", th_right),
+        Paragraph("<b>Credit (Rs.)</b>", th_right)
     ]]
     for r in daybook_data.get("rows", []):
         d_str = r["voucher_date"].strftime("%d-%m-%Y") if isinstance(r["voucher_date"], (date, datetime)) else str(r["voucher_date"])
@@ -696,20 +708,22 @@ def export_trial_balance_pdf(tb_data=None, output_path: Optional[Path] = None) -
     cell_style = ParagraphStyle('TBCell', fontName=FONT_REGULAR, fontSize=8, leading=10, textColor=colors.HexColor('#1E293B'))
     cell_right = ParagraphStyle('TBCR', parent=cell_style, alignment=2)
     heading_style = ParagraphStyle('TBHead', parent=styles['Heading2'], fontName=FONT_BOLD, fontSize=12, leading=14, textColor=colors.HexColor('#1E293B'), alignment=1)
+    th_style = ParagraphStyle('TBTH', parent=styles['Normal'], fontName=FONT_BOLD, fontSize=8.5, leading=11, textColor=colors.white)
+    th_right = ParagraphStyle('TBTHR', parent=th_style, alignment=2)
     story = [
         Paragraph("TRIAL BALANCE SHEET", heading_style),
         Paragraph(f"<font size=8 color='#64748B'>As of {tb_data.get('to_date')}</font>", ParagraphStyle('TBSub', alignment=1)),
         Spacer(1, 10)
     ]
     table_data = [[
-        Paragraph("<b>Party Name</b>", cell_style),
-        Paragraph("<b>Type</b>", cell_style),
-        Paragraph("<b>Op Dr (Rs.)</b>", cell_right),
-        Paragraph("<b>Op Cr (Rs.)</b>", cell_right),
-        Paragraph("<b>Period Dr (Rs.)</b>", cell_right),
-        Paragraph("<b>Period Cr (Rs.)</b>", cell_right),
-        Paragraph("<b>Closing Dr (Rs.)</b>", cell_right),
-        Paragraph("<b>Closing Cr (Rs.)</b>", cell_right)
+        Paragraph("<b>Party Name</b>", th_style),
+        Paragraph("<b>Type</b>", th_style),
+        Paragraph("<b>Op Dr (Rs.)</b>", th_right),
+        Paragraph("<b>Op Cr (Rs.)</b>", th_right),
+        Paragraph("<b>Period Dr (Rs.)</b>", th_right),
+        Paragraph("<b>Period Cr (Rs.)</b>", th_right),
+        Paragraph("<b>Closing Dr (Rs.)</b>", th_right),
+        Paragraph("<b>Closing Cr (Rs.)</b>", th_right)
     ]]
     for r in tb_data.get("rows", []):
         table_data.append([
@@ -722,14 +736,32 @@ def export_trial_balance_pdf(tb_data=None, output_path: Optional[Path] = None) -
             Paragraph(f"{r['cl_dr']:,.2f}", cell_right),
             Paragraph(f"{r['cl_cr']:,.2f}", cell_right)
         ])
+    has_totals = "total_op_dr" in tb_data
+    if has_totals:
+        cell_bold = ParagraphStyle('TBCB', parent=cell_style, fontName=FONT_BOLD)
+        cell_bold_right = ParagraphStyle('TBCBR', parent=cell_right, fontName=FONT_BOLD)
+        table_data.append([
+            Paragraph("<b>TOTALS</b>", cell_bold),
+            Paragraph("<b>Balanced</b>" if tb_data.get("is_balanced") else "<b>Difference</b>", cell_bold),
+            Paragraph(f"<b>{tb_data.get('total_op_dr', 0):,.2f}</b>", cell_bold_right),
+            Paragraph(f"<b>{tb_data.get('total_op_cr', 0):,.2f}</b>", cell_bold_right),
+            Paragraph(f"<b>{tb_data.get('total_period_dr', 0):,.2f}</b>", cell_bold_right),
+            Paragraph(f"<b>{tb_data.get('total_period_cr', 0):,.2f}</b>", cell_bold_right),
+            Paragraph(f"<b>{tb_data.get('total_cl_dr', 0):,.2f}</b>", cell_bold_right),
+            Paragraph(f"<b>{tb_data.get('total_cl_cr', 0):,.2f}</b>", cell_bold_right)
+        ])
     t = Table(table_data, colWidths=[180, 70, 70, 70, 75, 75, 75, 75], repeatRows=1)
-    t.setStyle(TableStyle([
+    table_styles = [
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0F172A')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#E2E8F0')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -2 if has_totals else -1), [colors.white, colors.HexColor('#F8FAFC')]),
         ('TOPPADDING', (0, 0), (-1, -1), 4),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-    ]))
+    ]
+    if has_totals:
+        table_styles.append(('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E2E8F0')))
+    t.setStyle(TableStyle(table_styles))
     story.append(t)
     doc.build(story, canvasmaker=NumberedCanvas)
     return output_path
@@ -1120,6 +1152,8 @@ def export_pnl_pdf(pnl_data=None, output_path: Optional[Path] = None, from_date=
     cell_bold = ParagraphStyle('PnLCB', parent=cell_style, fontName=FONT_BOLD)
     cell_right = ParagraphStyle('PnLCR', parent=cell_style, alignment=2)
     cell_bold_right = ParagraphStyle('PnLCBR', parent=cell_style, fontName=FONT_BOLD, alignment=2)
+    th_style = ParagraphStyle('PnLTH', parent=styles['Normal'], fontName=FONT_BOLD, fontSize=8.5, leading=11, textColor=colors.white)
+    th_right = ParagraphStyle('PnLTHR', parent=th_style, alignment=2)
     heading_style = ParagraphStyle('PnLHead', parent=styles['Heading2'], fontName=FONT_BOLD, fontSize=12, leading=14, textColor=colors.HexColor('#1E293B'), alignment=1)
 
     period_info = pnl_data.get("period", {})
@@ -1141,7 +1175,7 @@ def export_pnl_pdf(pnl_data=None, output_path: Optional[Path] = None, from_date=
     np_val = float(pnl_data.get("net_profit", 0.0))
     
     t_data = [
-        [Paragraph("<b>Particulars</b>", cell_bold), Paragraph("<b>Amount (Rs.)</b>", cell_bold_right)],
+        [Paragraph("<b>Particulars</b>", th_style), Paragraph("<b>Amount (Rs.)</b>", th_right)],
         # 1. Revenue
         [Paragraph("<b>1. REVENUE FROM OPERATIONS</b>", cell_bold), Paragraph("", cell_style)],
         [Paragraph("&nbsp;&nbsp;Gross Sales (Turnover)", cell_style), Paragraph(f"{rev.get('gross_sales', 0.0):,.2f}", cell_right)],
@@ -1288,6 +1322,8 @@ def export_cashbank_pdf(account_id: Optional[int] = None, start_date=None, end_d
     cell_style = ParagraphStyle('CBCell', fontName=FONT_REGULAR, fontSize=8, leading=10, textColor=colors.HexColor('#1E293B'))
     cell_right = ParagraphStyle('CBCR', parent=cell_style, alignment=2)
     heading_style = ParagraphStyle('CBHead', parent=styles['Heading2'], fontName=FONT_BOLD, fontSize=12, leading=14, textColor=colors.HexColor('#1E293B'), alignment=1)
+    th_style = ParagraphStyle('CBTH', parent=styles['Normal'], fontName=FONT_BOLD, fontSize=8, leading=10, textColor=colors.white)
+    th_right = ParagraphStyle('CBTHR', parent=th_style, alignment=2)
     
     if cashbank_data and isinstance(cashbank_data, dict):
         acc_name = cashbank_data.get("account_name", "Account")
@@ -1315,13 +1351,13 @@ def export_cashbank_pdf(account_id: Optional[int] = None, start_date=None, end_d
     ]
     
     headers = [
-        Paragraph("<b>Date</b>", cell_style),
-        Paragraph("<b>Type</b>", cell_style),
-        Paragraph("<b>Ref / Cheque</b>", cell_style),
-        Paragraph("<b>Particulars</b>", cell_style),
-        Paragraph("<b>Receipt (Rs.)</b>", cell_right),
-        Paragraph("<b>Payment (Rs.)</b>", cell_right),
-        Paragraph("<b>Balance (Rs.)</b>", cell_right),
+        Paragraph("<b>Date</b>", th_style),
+        Paragraph("<b>Type</b>", th_style),
+        Paragraph("<b>Ref / Cheque</b>", th_style),
+        Paragraph("<b>Particulars</b>", th_style),
+        Paragraph("<b>Receipt (Rs.)</b>", th_right),
+        Paragraph("<b>Payment (Rs.)</b>", th_right),
+        Paragraph("<b>Balance (Rs.)</b>", th_right),
     ]
     t_data = [headers]
     
@@ -1484,6 +1520,8 @@ def export_expense_pdf(start_date=None, end_date=None, category_id=None, output_
     cell_style = ParagraphStyle('ExpCell', fontName=FONT_REGULAR, fontSize=8, leading=10, textColor=colors.HexColor('#1E293B'))
     cell_right = ParagraphStyle('ExpCR', parent=cell_style, alignment=2)
     heading_style = ParagraphStyle('ExpHead', parent=styles['Heading2'], fontName=FONT_BOLD, fontSize=12, leading=14, textColor=colors.HexColor('#1E293B'), alignment=1)
+    th_style = ParagraphStyle('ExpTH', parent=styles['Normal'], fontName=FONT_BOLD, fontSize=8, leading=10, textColor=colors.white)
+    th_right = ParagraphStyle('ExpTHR', parent=th_style, alignment=2)
     
     if expense_data and isinstance(expense_data, dict):
         period_text = f"Period: {expense_data.get('from_date', '')} to {expense_data.get('to_date', '')}"
@@ -1503,13 +1541,13 @@ def export_expense_pdf(start_date=None, end_date=None, category_id=None, output_
     
     # Detailed Table
     headers = [
-        Paragraph("<b>Date</b>", cell_style),
-        Paragraph("<b>Category</b>", cell_style),
-        Paragraph("<b>Description</b>", cell_style),
-        Paragraph("<b>Payment Mode</b>", cell_style),
-        Paragraph("<b>Vendor / Party</b>", cell_style),
-        Paragraph("<b>Tax Amount (Rs.)</b>", cell_right),
-        Paragraph("<b>Total Amount (Rs.)</b>", cell_right),
+        Paragraph("<b>Date</b>", th_style),
+        Paragraph("<b>Category</b>", th_style),
+        Paragraph("<b>Description</b>", th_style),
+        Paragraph("<b>Payment Mode</b>", th_style),
+        Paragraph("<b>Vendor / Party</b>", th_style),
+        Paragraph("<b>Tax Amount (Rs.)</b>", th_right),
+        Paragraph("<b>Total Amount (Rs.)</b>", th_right),
     ]
     t_data = [headers]
     
